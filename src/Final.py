@@ -2520,11 +2520,19 @@ class SaveEditorGUI:
             if not messagebox.askyesno("Clear Slot", f"Clear relic from slot {idx + 1}?"):
                 return
             ga_handles[idx] = 0
-            self.write_preset_relic(preset_offset, idx, 0)
-            slot_relic_data[idx] = None
-            update_slot_display()
-            update_details_panel()
-            self.refresh_presets()
+            try:
+                loadout_handler.replace_preset_relic(data, preset['hero_type'], idx, 0, preset_index=preset['index'])
+                slot_relic_data[idx] = None
+                update_slot_display()
+                update_details_panel()
+                self.refresh_presets()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to clear relic from preset:\n{e}")
+            # self.write_preset_relic(preset_offset, idx, 0)
+            # slot_relic_data[idx] = None
+            # update_slot_display()
+            # update_details_panel()
+            # self.refresh_presets()
 
         def edit_selected_relic():
             """Open the modify dialog for the relic in the selected slot"""
@@ -2775,12 +2783,23 @@ class SaveEditorGUI:
             ga_handles[idx] = new_ga
 
             # Write to file
-            if self.write_preset_relic(preset_offset, idx, new_ga):
+            try:
+                loadout_handler.replace_preset_relic(data, preset['hero_type'], idx, new_ga,
+                                                     preset_index=preset['index'])
                 slot_relic_data[idx] = relic_data
                 update_slot_display()
                 update_details_panel()
                 populate_relic_list()  # Refresh list (color filter may change)
                 self.refresh_presets()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to assign preset relic:\n{e}")
+                
+            # if self.write_preset_relic(preset_offset, idx, new_ga):
+            #     slot_relic_data[idx] = relic_data
+            #     update_slot_display()
+            #     update_details_panel()
+            #     populate_relic_list()  # Refresh list (color filter may change)
+            #     self.refresh_presets()
 
         # Double-click to assign
         relic_listbox.bind('<Double-1>', lambda e: assign_selected_relic())
@@ -2829,129 +2848,129 @@ class SaveEditorGUI:
             messagebox.showerror("Error", f"Failed to write preset relic: {e}")
             return False
 
-    def show_preset_relic_replacement_dialog(self, parent_dialog, relic_tree, slot_items,
-                                             ga_handles, slot_idx, is_deep, current_color,
-                                             preset_offset, char_name, vessel_slot, preset_name,
-                                             slot_relic_data=None, update_details_func=None,
-                                             ga_to_full_info=None):
-        """Show dialog to select a replacement relic for a preset slot"""
-        dialog = tk.Toplevel(parent_dialog)
-        dialog.title(f"Select Relic for Slot {slot_idx + 1}")
-        dialog.geometry("950x600")
-        dialog.transient(parent_dialog)
-        dialog.grab_set()
+    # def show_preset_relic_replacement_dialog(self, parent_dialog, relic_tree, slot_items,
+    #                                          ga_handles, slot_idx, is_deep, current_color,
+    #                                          preset_offset, char_name, vessel_slot, preset_name,
+    #                                          slot_relic_data=None, update_details_func=None,
+    #                                          ga_to_full_info=None):
+    #     """Show dialog to select a replacement relic for a preset slot"""
+    #     dialog = tk.Toplevel(parent_dialog)
+    #     dialog.title(f"Select Relic for Slot {slot_idx + 1}")
+    #     dialog.geometry("950x600")
+    #     dialog.transient(parent_dialog)
+    #     dialog.grab_set()
 
-        # Options frame
-        options_frame = ttk.Frame(dialog)
-        options_frame.pack(fill='x', padx=10, pady=5)
+    #     # Options frame
+    #     options_frame = ttk.Frame(dialog)
+    #     options_frame.pack(fill='x', padx=10, pady=5)
 
-        # Color filter option
-        any_color_var = tk.BooleanVar(value=False)
+    #     # Color filter option
+    #     any_color_var = tk.BooleanVar(value=False)
 
-        def refresh_list():
-            self.refresh_preset_relic_list(
-                replacement_tree, details_text, current_color,
-                any_color_var.get(), is_deep, search_var.get()
-            )
+    #     def refresh_list():
+    #         self.refresh_preset_relic_list(
+    #             replacement_tree, details_text, current_color,
+    #             any_color_var.get(), is_deep, search_var.get()
+    #         )
 
-        ttk.Checkbutton(options_frame, text="Show all colors", variable=any_color_var,
-                        command=refresh_list).pack(side='left', padx=5)
+    #     ttk.Checkbutton(options_frame, text="Show all colors", variable=any_color_var,
+    #                     command=refresh_list).pack(side='left', padx=5)
 
-        # Search
-        ttk.Label(options_frame, text="Search:").pack(side='left', padx=5)
-        search_var = tk.StringVar()
-        search_entry = ttk.Entry(options_frame, textvariable=search_var, width=30)
-        search_entry.pack(side='left', padx=5)
-        search_var.trace('w', lambda *args: refresh_list())
+    #     # Search
+    #     ttk.Label(options_frame, text="Search:").pack(side='left', padx=5)
+    #     search_var = tk.StringVar()
+    #     search_entry = ttk.Entry(options_frame, textvariable=search_var, width=30)
+    #     search_entry.pack(side='left', padx=5)
+    #     search_var.trace('w', lambda *args: refresh_list())
 
-        # Main content - split into list and details
-        content_frame = ttk.Frame(dialog)
-        content_frame.pack(fill='both', expand=True, padx=10, pady=5)
+    #     # Main content - split into list and details
+    #     content_frame = ttk.Frame(dialog)
+    #     content_frame.pack(fill='both', expand=True, padx=10, pady=5)
 
-        # Left side - Relic list
-        list_frame = ttk.LabelFrame(content_frame, text="Available Relics")
-        list_frame.pack(side='left', fill='both', expand=True, padx=(0, 5))
+    #     # Left side - Relic list
+    #     list_frame = ttk.LabelFrame(content_frame, text="Available Relics")
+    #     list_frame.pack(side='left', fill='both', expand=True, padx=(0, 5))
 
-        columns = ('Name', 'Color')
-        replacement_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=18)
-        replacement_tree.heading('Name', text='Relic Name')
-        replacement_tree.heading('Color', text='Color')
+    #     columns = ('Name', 'Color')
+    #     replacement_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=18)
+    #     replacement_tree.heading('Name', text='Relic Name')
+    #     replacement_tree.heading('Color', text='Color')
 
-        replacement_tree.column('Name', width=280)
-        replacement_tree.column('Color', width=80)
+    #     replacement_tree.column('Name', width=280)
+    #     replacement_tree.column('Color', width=80)
 
-        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=replacement_tree.yview)
-        replacement_tree.configure(yscrollcommand=scrollbar.set)
+    #     scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=replacement_tree.yview)
+    #     replacement_tree.configure(yscrollcommand=scrollbar.set)
 
-        replacement_tree.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
+    #     replacement_tree.pack(side='left', fill='both', expand=True)
+    #     scrollbar.pack(side='right', fill='y')
 
-        # Right side - Details panel
-        details_outer = ttk.LabelFrame(content_frame, text="Relic Details")
-        details_outer.pack(side='right', fill='both', expand=True, padx=(5, 0))
+    #     # Right side - Details panel
+    #     details_outer = ttk.LabelFrame(content_frame, text="Relic Details")
+    #     details_outer.pack(side='right', fill='both', expand=True, padx=(5, 0))
 
-        details_text = tk.Text(details_outer, wrap='word', width=45, height=20, font=('Consolas', 9))
-        details_text.pack(fill='both', expand=True, padx=5, pady=5)
-        details_text.config(state='disabled')
+    #     details_text = tk.Text(details_outer, wrap='word', width=45, height=20, font=('Consolas', 9))
+    #     details_text.pack(fill='both', expand=True, padx=5, pady=5)
+    #     details_text.config(state='disabled')
 
-        # Configure text tags
-        details_text.tag_configure('title', font=('Segoe UI', 11, 'bold'))
-        details_text.tag_configure('section', font=('Segoe UI', 10, 'bold'), foreground='#4a90d9')
-        details_text.tag_configure('curse', foreground='#cc4444')
+    #     # Configure text tags
+    #     details_text.tag_configure('title', font=('Segoe UI', 11, 'bold'))
+    #     details_text.tag_configure('section', font=('Segoe UI', 10, 'bold'), foreground='#4a90d9')
+    #     details_text.tag_configure('curse', foreground='#cc4444')
 
-        # Populate initial list
-        self.refresh_preset_relic_list(replacement_tree, details_text, current_color, False, is_deep, "")
+    #     # Populate initial list
+    #     self.refresh_preset_relic_list(replacement_tree, details_text, current_color, False, is_deep, "")
 
-        # Button frame
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(fill='x', padx=10, pady=10)
+    #     # Button frame
+    #     btn_frame = ttk.Frame(dialog)
+    #     btn_frame.pack(fill='x', padx=10, pady=10)
 
-        def on_select():
-            selection = replacement_tree.selection()
-            if not selection:
-                messagebox.showwarning("No Selection", "Please select a relic.")
-                return
+    #     def on_select():
+    #         selection = replacement_tree.selection()
+    #         if not selection:
+    #             messagebox.showwarning("No Selection", "Please select a relic.")
+    #             return
 
-            # Get relic data from our stored map
-            item_data = replacement_tree.item(selection[0])
-            new_ga = item_data.get('tags', [None])[0]
-            if new_ga is None:
-                return
-            new_ga = int(new_ga)
+    #         # Get relic data from our stored map
+    #         item_data = replacement_tree.item(selection[0])
+    #         new_ga = item_data.get('tags', [None])[0]
+    #         if new_ga is None:
+    #             return
+    #         new_ga = int(new_ga)
 
-            values = item_data['values']
-            new_name = values[0]
-            new_color = values[1]
+    #         values = item_data['values']
+    #         new_name = values[0]
+    #         new_color = values[1]
 
-            # Update in memory
-            ga_handles[slot_idx] = new_ga
+    #         # Update in memory
+    #         ga_handles[slot_idx] = new_ga
 
-            # Write to file
-            if self.write_preset_relic(preset_offset, slot_idx, new_ga):
-                # Update the parent tree display
-                slot_label = f"{'🔮 ' if is_deep else ''}Slot {slot_idx + 1}"
-                for item_id, idx in slot_items.items():
-                    if idx == slot_idx:
-                        relic_tree.item(item_id, values=(slot_label, new_name, new_color))
-                        break
+    #         # Write to file
+    #         if self.write_preset_relic(preset_offset, slot_idx, new_ga):
+    #             # Update the parent tree display
+    #             slot_label = f"{'🔮 ' if is_deep else ''}Slot {slot_idx + 1}"
+    #             for item_id, idx in slot_items.items():
+    #                 if idx == slot_idx:
+    #                     relic_tree.item(item_id, values=(slot_label, new_name, new_color))
+    #                     break
 
-                # Update slot_relic_data if provided
-                if slot_relic_data is not None and ga_to_full_info is not None:
-                    slot_relic_data[slot_idx] = ga_to_full_info.get(new_ga)
+    #             # Update slot_relic_data if provided
+    #             if slot_relic_data is not None and ga_to_full_info is not None:
+    #                 slot_relic_data[slot_idx] = ga_to_full_info.get(new_ga)
 
-                # Update details in parent dialog
-                if update_details_func:
-                    update_details_func()
+    #             # Update details in parent dialog
+    #             if update_details_func:
+    #                 update_details_func()
 
-                # Refresh the presets tree in the main window
-                self.refresh_presets()
-                dialog.destroy()
+    #             # Refresh the presets tree in the main window
+    #             self.refresh_presets()
+    #             dialog.destroy()
 
-        ttk.Button(btn_frame, text="Select", command=on_select).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side='right', padx=5)
+    #     ttk.Button(btn_frame, text="Select", command=on_select).pack(side='left', padx=5)
+    #     ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side='right', padx=5)
 
-        # Double-click to select
-        replacement_tree.bind("<Double-1>", lambda e: on_select())
+    #     # Double-click to select
+    #     replacement_tree.bind("<Double-1>", lambda e: on_select())
 
     def refresh_preset_relic_list(self, tree, details_text, current_color, any_color, is_deep, search_text):
         """Refresh the list of available relics for preset replacement"""
@@ -3423,7 +3442,8 @@ class SaveEditorGUI:
             return False
         vessel_id = loadout_handler.get_vessel_id(hero_type, vessel_slot)
         try:
-            loadout_handler.replace_vessel_relic(hero_type, vessel_id, slot_index, new_ga)
+            loadout_handler.replace_vessel_relic(data, hero_type, vessel_id, slot_index, new_ga)
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to replace relic: {e}")
             return False

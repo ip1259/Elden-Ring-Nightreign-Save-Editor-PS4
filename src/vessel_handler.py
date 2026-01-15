@@ -27,8 +27,9 @@ class HeroLoadout:
         # Stores offsets for hero-level fields
         self.offsets = offsets
 
-    def add_preset(self, index, name, vessel_id, relics, offsets, counter, timestamp):
+    def add_preset(self, hero_type, index, name, vessel_id, relics, offsets, counter, timestamp):
         self.presets.append({
+            "hero_type": hero_type,
             "index": index,
             "name": name,
             "vessel_id": vessel_id,
@@ -190,7 +191,7 @@ class VesselParser:
             cursor += 8
 
             if h_id in heroes:
-                heroes[h_id].add_preset(preset_index, name, v_id, relics, p_offsets, counter_val, timestamp)
+                heroes[h_id].add_preset(h_id, preset_index, name, v_id, relics, p_offsets, counter_val, timestamp)
 
             preset_index += 1
 
@@ -453,9 +454,9 @@ class LoadoutHandler:
     def get_modified_data(self) -> bytearray:
         return self.modifier.get_updated_data()
 
-    def reload_data(self, data: bytes, loadout_edited: bool = True):
-        self.modifier.user_data = bytearray(data)
-        self.parser.user_data = bytearray(data)
+    def reload_data(self, data: bytearray, loadout_edited: bool = True):
+        self.modifier.user_data = data
+        self.parser.user_data = data
         if loadout_edited:
             self.parse()
 
@@ -498,7 +499,7 @@ class LoadoutHandler:
         else:
             raise ValueError("Invalid preset index")
 
-    def push_preset(self, hero_type: int, vessel_id: int, relics: list[int], name: str):
+    def push_preset(self, user_data: bytearray, hero_type: int, vessel_id: int, relics: list[int], name: str):
         """
         Append a new preset to the specified hero's loadout.
         
@@ -517,6 +518,7 @@ class LoadoutHandler:
         :returns: return the modified data as immutable bytes.
         :rtype: bytes
         """
+        self.reload_data(user_data)
         # Check Preset Capacity
         if len(self.all_presets) > 100:
             raise LoadoutHandler.PresetsCapacityFullError("Maximum preset capacity reached.")
@@ -539,6 +541,7 @@ class LoadoutHandler:
         new_timestamp = get_now_timestamp()
 
         new_preset = {
+            "hero_type": hero_type,
             "index": len(self.all_presets),
             "name": name,
             "vessel_id": vessel_id,
@@ -556,8 +559,9 @@ class LoadoutHandler:
         self.validator.auto_adjust_cur_equipment(self.heroes, hero_type)
         self.update_hero_loadout(hero_type)
 
-    def replace_vessel_relic(self, hero_type: int, vessel_id: int,
+    def replace_vessel_relic(self, user_data: bytearray, hero_type: int, vessel_id: int,
                              relic_index: int, new_relic_ga):
+        self.reload_data(user_data)
         _new_vessel = None
         vessel_index = 0
         for idx, vessel in enumerate(self.heroes[hero_type].vessels):
@@ -574,8 +578,9 @@ class LoadoutHandler:
                 self.validator.auto_adjust_cur_equipment(self.heroes, hero_type)
             self.update_hero_loadout(hero_type)
 
-    def replace_preset_relic(self, hero_type: int, relic_index: int, new_relic_ga,
+    def replace_preset_relic(self, user_data: bytearray, hero_type: int, relic_index: int, new_relic_ga,
                              hero_preset_index: int = -1, preset_index: int = -1):
+        self.reload_data(user_data)
         if hero_preset_index < 0 and preset_index < 0:
             raise ValueError("hero_preset_index or preset_index should be provided")
         if hero_preset_index >= 0 and preset_index >= 0:
@@ -586,7 +591,7 @@ class LoadoutHandler:
             raise ValueError("Invalid preset index")
         if relic_index < 0 or relic_index >= 6:
             raise ValueError("Invalid relic index")
-        
+
         _new_preset = None
         if preset_index >= 0:
             _new_preset = deepcopy(self.all_presets[preset_index])
