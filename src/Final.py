@@ -7,6 +7,7 @@ from pathlib import Path
 # openpyxl is lazy-loaded in export/import functions to speed up startup
 from typing import Optional
 import sys
+import threading
 # project modules
 from basic_class import Item
 import globals
@@ -1659,6 +1660,65 @@ class SaveEditorGUI:
 
         # Try to load last opened file after UI is set up
         self.root.after(100, self.try_load_last_file)
+        
+    def run_task_async(self, task_func, args=(), title="Processing", label_text="Please wait...", callback=None):
+        """
+        A universal async wrapper to run heavy tasks without freezing the GUI.
+        
+        :param task_func: The function to execute in background.
+        :param args: Tuple of arguments to pass to the task_func.
+        :param title: Window title of the loading popup.
+        :param label_text: Message displayed in the loading popup.
+        :param callback: A function to run in the main thread after task_func finishes successfully.
+        """
+        # 1. Create a top-level loading window
+        loading_win = tk.Toplevel(self.root)
+        loading_win.title(title)
+        loading_win.geometry("350x150")
+        loading_win.resizable(False, False)
+        loading_win.attributes("-topmost", True)
+        loading_win.transient(self.root)
+        
+        # Center the loading window relative to main window
+        loading_win.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (loading_win.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (loading_win.winfo_height() // 2)
+        loading_win.geometry(f"+{x}+{y}")
+
+        # UI Elements
+        ttk.Label(loading_win, text=label_text, font=('Arial', 10), wraplength=300).pack(pady=20)
+        progress = ttk.Progressbar(loading_win, mode='indeterminate', length=250)
+        progress.pack(pady=10)
+        progress.start(10)
+
+        # Critical: Lock the main GUI to prevent data corruption/multiple clicks
+        loading_win.grab_set()
+
+        def thread_wrapper():
+            try:
+                # 2. Execute the heavy task
+                task_func(*args)
+                
+                # 3. Task finished: Close window and run callback in main thread
+                self.root.after(0, lambda: finish_task(True))
+            except Exception as e:
+                # Task failed: Close window and show error in main thread
+                self.root.after(0, lambda: finish_task(False, str(e)))
+
+        def finish_task(success, err_msg=None):
+            # Release the GUI lock and close popup
+            loading_win.destroy()
+            
+            if success:
+                # Execute the provided callback if any
+                if callback:
+                    callback()
+            else:
+                messagebox.showerror("Error", f"Task failed:\n{err_msg}")
+
+        # 4. Start the background thread
+        bg_thread = threading.Thread(target=thread_wrapper, daemon=True)
+        bg_thread.start()
 
     def try_load_last_file(self):
         """Try to load the last opened save file and character"""
@@ -4029,130 +4089,136 @@ class SaveEditorGUI:
         # Clear treeview
         for item in self.tree.get_children():
             self.tree.delete(item)
-
-        # Parse items - this updates ga_relic with current data
-        gaprint(globals.data)
-
-        # Re-parse vessel assignments
-        # parse_vessel_assignments(data)
-        loadout_handler.parse()
-        loadout_handler.reload_ga_relics(ga_relic)
-        # loadout_handler.display_results()
-
-        # Update relic checker with new ga_relic and recalculate illegal relics
-        if relic_checker:
-            relic_checker.ga_relic = ga_relic
-            relic_checker.set_illegal_relics()
-
-        # Check for illegal relics
-        illegal_gas = check_illegal_relics()
-
-        # Check for forbidden relics (unique relics that are technically invalid but allowed)
-        forbidden_relics = get_forbidden_relics()
-
-        # Count truly illegal relics (exclude forbidden/unique relics from count)
-        # Forbidden relics are marked orange and shouldn't count as "illegal"
-        truly_illegal_count = 0
-        for ga, id, *_ in ga_relic:
-            real_id = id - 2147483648
-            if ga in illegal_gas and real_id not in forbidden_relics:
-                truly_illegal_count += 1
-
-        # Update illegal count label (only count non-forbidden illegal relics)
-        if truly_illegal_count > 0:
-            self.illegal_count_label.config(text=f"⚠️ {truly_illegal_count} Illegal Relic(s) Found")
-        else:
-            self.illegal_count_label.config(text="✓ All Relics Valid")
         
-        # Store all relic data for filtering
-        self.all_relics = []
-        
-        # Populate treeview
-        for idx, (ga, id, e1, e2, e3, se1, se2, se3, offset, size) in enumerate(ga_relic):
-            real_id = id - 2147483648
+        def heavy_loading():
+
+            # Parse items - this updates ga_relic with current data
+            gaprint(globals.data)
+
+            # Re-parse vessel assignments
+            # parse_vessel_assignments(data)
+            loadout_handler.parse()
+            loadout_handler.reload_ga_relics(ga_relic)
+            # loadout_handler.display_results()
+
+            # Update relic checker with new ga_relic and recalculate illegal relics
+            if relic_checker:
+                relic_checker.ga_relic = ga_relic
+                relic_checker.set_illegal_relics()
             
-            # Get item name and color
-            item_name = "Unknown"
-            item_color = "Unknown"
-            if str(real_id) in items_json:
-                item_name = items_json[str(real_id)]["name"]
-                item_color = items_json[str(real_id)].get("color", "Unknown")
+        def after_heavy_loading():
+
+            # Check for illegal relics
+            illegal_gas = check_illegal_relics()
+
+            # Check for forbidden relics (unique relics that are technically invalid but allowed)
+            forbidden_relics = get_forbidden_relics()
+
+            # Count truly illegal relics (exclude forbidden/unique relics from count)
+            # Forbidden relics are marked orange and shouldn't count as "illegal"
+            truly_illegal_count = 0
+            for ga, id, *_ in ga_relic:
+                real_id = id - 2147483648
+                if ga in illegal_gas and real_id not in forbidden_relics:
+                    truly_illegal_count += 1
+
+            # Update illegal count label (only count non-forbidden illegal relics)
+            if truly_illegal_count > 0:
+                self.illegal_count_label.config(text=f"⚠️ {truly_illegal_count} Illegal Relic(s) Found")
+            else:
+                self.illegal_count_label.config(text="✓ All Relics Valid")
             
-            # Get effect names
-            effects = [e1, e2, e3, se1, se2, se3]
-            effect_names = []
+            # Store all relic data for filtering
+            self.all_relics = []
             
-            for eff in effects:
-                if eff == 0:
-                    effect_names.append("None")
-                elif eff == 4294967295:
-                    effect_names.append("Empty")
-                elif str(eff) in effects_json:
-                    effect_names.append(
-                        "".join(effects_json[str(eff)]["name"].splitlines()))
-                else:
-                    effect_names.append(f"Unknown ({eff})")
-            
-            # Check if this relic is illegal or forbidden
-            is_illegal = ga in illegal_gas
-            is_forbidden = real_id in forbidden_relics
-            is_curse_illegal = relic_checker and ga in relic_checker.curse_illegal_gas
-            is_strict_invalid = relic_checker and ga in relic_checker.strict_invalid_gas
+            # Populate treeview
+            for idx, (ga, id, e1, e2, e3, se1, se2, se3, offset, size) in enumerate(ga_relic):
+                real_id = id - 2147483648
+                
+                # Get item name and color
+                item_name = "Unknown"
+                item_color = "Unknown"
+                if str(real_id) in items_json:
+                    item_name = items_json[str(real_id)]["name"]
+                    item_color = items_json[str(real_id)].get("color", "Unknown")
+                
+                # Get effect names
+                effects = [e1, e2, e3, se1, se2, se3]
+                effect_names = []
+                
+                for eff in effects:
+                    if eff == 0:
+                        effect_names.append("None")
+                    elif eff == 4294967295:
+                        effect_names.append("Empty")
+                    elif str(eff) in effects_json:
+                        effect_names.append(
+                            "".join(effects_json[str(eff)]["name"].splitlines()))
+                    else:
+                        effect_names.append(f"Unknown ({eff})")
+                
+                # Check if this relic is illegal or forbidden
+                is_illegal = ga in illegal_gas
+                is_forbidden = real_id in forbidden_relics
+                is_curse_illegal = relic_checker and ga in relic_checker.curse_illegal_gas
+                is_strict_invalid = relic_checker and ga in relic_checker.strict_invalid_gas
 
-            # Get character assignment (which characters have this relic equipped)
-            equipped_by_hero_type = loadout_handler.relic_ga_hero_map.get(ga, [])
-            equipped_by = [data_source.character_names[h_t-1] for h_t in equipped_by_hero_type]
-            equipped_by_str = ", ".join(equipped_by) if equipped_by else "-"
+                # Get character assignment (which characters have this relic equipped)
+                equipped_by_hero_type = loadout_handler.relic_ga_hero_map.get(ga, [])
+                equipped_by = [data_source.character_names[h_t-1] for h_t in equipped_by_hero_type]
+                equipped_by_str = ", ".join(equipped_by) if equipped_by else "-"
 
-            # Check if this is a deep relic (ID range 2000000-2019999)
-            is_deep = 2000000 <= real_id <= 2019999
+                # Check if this is a deep relic (ID range 2000000-2019999)
+                is_deep = 2000000 <= real_id <= 2019999
 
-            # Determine tag
-            tag_list = [ga, real_id]
-            if is_forbidden and is_illegal:
-                tag_list.append('both')
-            elif is_forbidden:
-                tag_list.append('forbidden')
-            elif is_curse_illegal:
-                tag_list.append('curse_illegal')
-            elif is_illegal:
-                tag_list.append('illegal')
-            elif is_strict_invalid:
-                tag_list.append('strict_invalid')
+                # Determine tag
+                tag_list = [ga, real_id]
+                if is_forbidden and is_illegal:
+                    tag_list.append('both')
+                elif is_forbidden:
+                    tag_list.append('forbidden')
+                elif is_curse_illegal:
+                    tag_list.append('curse_illegal')
+                elif is_illegal:
+                    tag_list.append('illegal')
+                elif is_strict_invalid:
+                    tag_list.append('strict_invalid')
 
-            # Get acquisition order from inventory section (matches in-game sorting)
-            # Lower number = acquired earlier (oldest)
-            acquisition_order = ga_acquisition_order.get(ga, 999999)
+                # Get acquisition order from inventory section (matches in-game sorting)
+                # Lower number = acquired earlier (oldest)
+                acquisition_order = ga_acquisition_order.get(ga, 999999)
 
-            # Store relic data for filtering
-            self.all_relics.append({
-                'index': idx + 1,
-                'ga': ga,
-                'acquisition_index': acquisition_order,
-                'item_name': item_name,
-                'real_id': real_id,
-                'item_color': item_color,
-                'is_deep': is_deep,
-                'equipped_by': equipped_by,
-                'equipped_by_str': equipped_by_str,
-                'effect_names': effect_names,
-                'effect_ids': effects,  # Store raw effect IDs for searching
-                'tag_list': tuple(tag_list),
-                'is_forbidden': is_forbidden,
-                'is_illegal': is_illegal,
-                'is_curse_illegal': is_curse_illegal,
-                'is_strict_invalid': is_strict_invalid,
-                'both': is_forbidden and is_illegal
-            })
+                # Store relic data for filtering
+                self.all_relics.append({
+                    'index': idx + 1,
+                    'ga': ga,
+                    'acquisition_index': acquisition_order,
+                    'item_name': item_name,
+                    'real_id': real_id,
+                    'item_color': item_color,
+                    'is_deep': is_deep,
+                    'equipped_by': equipped_by,
+                    'equipped_by_str': equipped_by_str,
+                    'effect_names': effect_names,
+                    'effect_ids': effects,  # Store raw effect IDs for searching
+                    'tag_list': tuple(tag_list),
+                    'is_forbidden': is_forbidden,
+                    'is_illegal': is_illegal,
+                    'is_curse_illegal': is_curse_illegal,
+                    'is_strict_invalid': is_strict_invalid,
+                    'both': is_forbidden and is_illegal
+                })
 
-        # Calculate acquisition rank (1, 2, 3...) based on acquisition_index
-        # Sort by acquisition_index and assign ranks
-        sorted_by_acq = sorted(self.all_relics, key=lambda r: r.get('acquisition_index', 999999))
-        for rank, relic in enumerate(sorted_by_acq, start=1):
-            relic['acquisition_rank'] = rank
+            # Calculate acquisition rank (1, 2, 3...) based on acquisition_index
+            # Sort by acquisition_index and assign ranks
+            sorted_by_acq = sorted(self.all_relics, key=lambda r: r.get('acquisition_index', 999999))
+            for rank, relic in enumerate(sorted_by_acq, start=1):
+                relic['acquisition_rank'] = rank
 
-        # Apply current filter (if any)
-        self.filter_relics()
+            # Apply current filter (if any)
+            self.filter_relics()
+        self.run_task_async(heavy_loading, (), "Loading...",
+                            callback=after_heavy_loading)
     
     def filter_relics(self):
         """Filter relics based on search term and all filter criteria"""
