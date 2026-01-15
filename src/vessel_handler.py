@@ -417,11 +417,8 @@ class Validator:
 
 class LoadoutHandler:
     """
-    All Hero Loadout modifications should be performed using this class
-    instance to ensure that the member variable `user_data`
-    remains synchronized with the data in `Vessel` and `Preset`,
-    as well as the global variable `data`.
-    This allows the `reload_data` method to bypass redundant reanalysis steps.
+    Hero Loadout Handler
+    Manage hero loadouts, including parsing, modifying, validating, and equipping presets.
     """
     class PresetsCapacityFullError(Exception):
         pass
@@ -486,7 +483,6 @@ class LoadoutHandler:
             raise ValueError("Invalid relic index")
 
     def equip_preset(self, hero_type: int, preset_index: int):
-        # self.reload_data(user_data)
         if hero_type not in range(1, 11):
             raise ValueError("Invalid hero type")
         if hero_type not in self.heroes:
@@ -517,7 +513,6 @@ class LoadoutHandler:
         :returns: return the modified data as immutable bytes.
         :rtype: bytes
         """
-        # self.reload_data(user_data)
         # Check Preset Capacity
         if len(self.all_presets) > 100:
             raise LoadoutHandler.PresetsCapacityFullError("Maximum preset capacity reached.")
@@ -560,7 +555,6 @@ class LoadoutHandler:
 
     def replace_vessel_relic(self, hero_type: int, vessel_id: int,
                              relic_index: int, new_relic_ga):
-        # self.reload_data(user_data)
         _new_vessel = None
         vessel_index = 0
         for idx, vessel in enumerate(self.heroes[hero_type].vessels):
@@ -579,7 +573,6 @@ class LoadoutHandler:
 
     def replace_preset_relic(self, hero_type: int, relic_index: int, new_relic_ga,
                              hero_preset_index: int = -1, preset_index: int = -1):
-        # self.reload_data(user_data)
         if hero_preset_index < 0 and preset_index < 0:
             raise ValueError("hero_preset_index or preset_index should be provided")
         if hero_preset_index >= 0 and preset_index >= 0:
