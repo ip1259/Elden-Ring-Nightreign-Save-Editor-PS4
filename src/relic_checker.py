@@ -1,6 +1,6 @@
 from source_data_handler import SourceDataHandler
 from enum import IntEnum, auto, unique
-from typing import Union
+from typing import Optional, Union
 
 
 @unique
@@ -297,7 +297,7 @@ class RelicChecker:
                 return InvalidReason.NONE, -1
             return InvalidReason.NONE
 
-    def is_strict_invalid(self, relic_id: int, effects: list[int]):
+    def is_strict_invalid(self, relic_id: int, effects: list[int], invalid_reason: Optional[InvalidReason] = None):
         """Check if a relic has effects with 0 weight in the relic's specific pools,
         but non-zero weight in other pools of the same type.
 
@@ -309,7 +309,8 @@ class RelicChecker:
         for their permuted slot's specific pool.
         """
         # Skip if relic is actually illegal (that's a different issue)
-        invalid_reason = self.check_invalidity(relic_id, effects)
+        if not invalid_reason:
+            invalid_reason = self.check_invalidity(relic_id, effects)
         if invalid_reason != InvalidReason.NONE:
             return False
 
@@ -363,7 +364,7 @@ class RelicChecker:
 
         Returns None if the relic is not strictly invalid.
         """
-        if not self.is_strict_invalid(relic_id, effects):
+        if not self.is_strict_invalid(relic_id, effects, InvalidReason.NONE):
             return None
 
         try:
@@ -704,7 +705,7 @@ class RelicChecker:
                 # Check if it's specifically curse-illegal
                 if is_curse_invalid(invalid_reason):
                     curse_illegal_relics.append(ga)
-            elif self.is_strict_invalid(real_id, effects):
+            elif self.is_strict_invalid(real_id, effects, InvalidReason.NONE):
                 # Valid but has effects with 0 weight in specific pool
                 strict_invalid_relics.append(ga)
 

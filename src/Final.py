@@ -3938,7 +3938,6 @@ class SaveEditorGUI:
             gaprint(globals.data)
 
             # Parse Vessels and Presets
-            print(id(globals.data))
             loadout_handler = LoadoutHandler(data_source, ga_relic)
             loadout_handler.parse()
 
@@ -5062,7 +5061,7 @@ class ModifyRelicDialog:
 
         if invalid_reason == InvalidReason.NONE:
             # Check for strict invalid (valid but 0% weight effects)
-            is_strict_invalid = relic_checker.is_strict_invalid(relic_id, effects) if relic_checker else False
+            is_strict_invalid = relic_checker.is_strict_invalid(relic_id, effects, invalid_reason) if relic_checker else False
             if is_strict_invalid:
                 strict_reason = relic_checker.get_strict_invalid_reason(relic_id, effects) if relic_checker else None
                 self.status_label.config(text="⚠️ STRICT INVALID", foreground='#008080')  # Teal color
