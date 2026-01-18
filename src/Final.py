@@ -5,9 +5,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
 # openpyxl is lazy-loaded in export/import functions to speed up startup
-from typing import Optional
+from typing import Optional, Any
 import sys
 import threading
+import re
 # project modules
 from basic_class import Item
 import globals
@@ -1055,7 +1056,8 @@ def delete_relic(ga_index, item_id):
             return True
     return False
 
-def add_relic():
+
+def add_relic() -> tuple[bool, Any]:
     """
     Adds a new relic item to the player's save file.
 
@@ -1069,6 +1071,7 @@ def add_relic():
 
     Returns:
         bool: True if the relic was successfully added, False otherwise
+        ga: New GA handle of the added relic, or None on failure
     """
 
     last_offset = gaprint(globals.data)
@@ -1097,7 +1100,7 @@ def add_relic():
         new_ga = max(gas) + 1
     if new_ga > (ITEM_TYPE_RELIC | 0xfffffff):
         # Inventory full
-        return False
+        return False, None
     new_ga_bytes = new_ga.to_bytes(4, byteorder="little")
 
     # Build the inventory entry (14 bytes) for the new relic.
@@ -1116,7 +1119,7 @@ def add_relic():
         last_inventory = max(last_inventory, inventory_data.find(gab))
     if last_inventory == -1:
         # No existing relics found in inventory - cannot determine insertion point
-        return False
+        return False, None
 
     # Find an empty slot in the item data section to convert into a relic slot.
     empty_slot_offset = -1
@@ -1127,7 +1130,7 @@ def add_relic():
 
     if empty_slot_offset == -1:
         # No empty slot available to convert - inventory is full
-        return False
+        return False, None
 
     # Write the inventory entry at the calculated position.
     match = last_inventory + inventory_start
@@ -1149,7 +1152,7 @@ def add_relic():
     globals.data = globals.data[: -0x1C - 72] + globals.data[-0x1C:]
 
     save_current_data()
-    return True
+    return True, new_ga
 
 
 def modify_relic(ga_index, item_id, new_effects, new_item_id=None):
@@ -1741,6 +1744,11 @@ class SearchableCombobox(ttk.Frame):
 class SaveEditorGUI:
     def __init__(self, root):
         global loadout_handler
+        # ttk Style setting
+        style = ttk.Style()
+        style.configure('Add.TButton', foreground='green', font=('Arial', 10, 'bold'))
+        style.configure('Danger.TButton', foreground='red', font=('Arial', 10))
+        
         _ensure_data_source()
         self.root = root
         self.root.title("Elden Ring NightReign Save Editor")
@@ -2002,6 +2010,64 @@ class SaveEditorGUI:
 
         # Create 11 vessel slot displays (1 column layout)
         # Vessel names will be updated dynamically based on selected character
+        def open_new_preset_name_dialog():
+            # Dialog to enter new preset name
+            def check_regex(P):
+                if re.fullmatch(r"[a-zA-Z0-9 ]{0,18}", P):
+                    return True
+                return False
+            vcmd = self.root.register(check_regex)
+            dialog = tk.Toplevel(self.root)
+            dialog.title("New Preset Name")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            label = ttk.Label(dialog, text="Enter name for new preset:")
+            label.pack(pady=10, padx=10)
+            
+            name_entry = ttk.Entry(dialog, validate='key', validatecommand=(vcmd, '%P'), width=30)
+            name_entry.pack(pady=5, padx=10)
+            name_entry.focus_set()
+            
+            result = {"name": None}  # Use a dict to pass value back
+            
+            def on_ok():
+                result["name"] = name_entry.get().strip()
+                if result["name"] is None or result["name"].strip() == "":
+                    messagebox.showerror("Error", "Preset name cannot be empty")
+                    return
+                dialog.destroy()
+            
+            def on_cancel():
+                dialog.destroy()
+
+            ok_button = ttk.Button(dialog, text="OK", command=on_ok)
+            ok_button.pack(side=tk.LEFT, padx=5, pady=10)
+            
+            cancel_button = ttk.Button(dialog, text="Cancel", command=on_cancel)
+            cancel_button.pack(side=tk.RIGHT, padx=5, pady=10)
+            
+            self.root.wait_window(dialog)
+            return result["name"]
+        
+        def on_add_to_preset(vessel_slot):
+            hero_type = self.vessel_char_combo.current()+1
+            preset_name = open_new_preset_name_dialog()
+            vessel_id = loadout_handler.heroes[hero_type].vessels[vessel_slot]['vessel_id']
+            relics = loadout_handler.heroes[hero_type].vessels[vessel_slot]['relics']
+            if preset_name is None:
+                return
+            try:
+                loadout_handler.push_preset(hero_type, vessel_id, relics, preset_name)
+                save_current_data()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+                return
+            self.refresh_inventory_and_vessels()
+            
+        # Store status labels for updating
+        self.vessel_status_labels = []
+            
         for i in range(11):
             vessel_frame = ttk.LabelFrame(self.vessels_inner_frame, text=f"Vessel Slot {i}")
             vessel_frame.grid(row=i, column=0, padx=5, pady=5, sticky='nsew')
@@ -2010,8 +2076,12 @@ class SaveEditorGUI:
             vessel_frame.bind("<MouseWheel>", _on_vessels_mousewheel)
 
             # Status label for unlock state
-            status_label = ttk.Label(vessel_frame, text="")
-            status_label.pack(anchor='w', padx=5, pady=2)
+            label_line_frame = ttk.Frame(vessel_frame)
+            label_line_frame.pack(padx=5, pady=2, fill='x')
+            status_label = ttk.Label(label_line_frame, text="")
+            status_label.pack(side='left', padx=5)
+            add_to_preset_button = ttk.Button(label_line_frame, text="➕ Add to Preset", command=lambda v=i: on_add_to_preset(v))
+            add_to_preset_button.pack(side='right', padx=5)
 
             # Treeview for relics in this vessel - 6 slots (3 normal + 3 deep relics)
             columns = ('Slot', 'Type', 'Color', 'Relic Name', 'ID', 'Effect 1', 'Effect 2', 'Effect 3')
@@ -2058,15 +2128,7 @@ class SaveEditorGUI:
 
             self.vessel_frames.append(vessel_frame)
             self.vessel_trees.append(tree)
-
-        # Store status labels for updating
-        self.vessel_status_labels = []
-        for frame in self.vessel_frames:
-            # Find the status label in each frame
-            for child in frame.winfo_children():
-                if isinstance(child, ttk.Label):
-                    self.vessel_status_labels.append(child)
-                    break
+            self.vessel_status_labels.append(status_label)
 
         # ============================================
         # PRESETS SECTION
@@ -2399,10 +2461,31 @@ class SaveEditorGUI:
                 'preset': preset,
                 'ga_to_relic_info': ga_to_relic_info
             }
-
+            
+            def on_equip_preset(target_preset, target_vessel_slot):
+                cur_preset_name = target_preset.get('name', 'Unknown')
+                _vessel_info = get_vessel_info(char_name, target_vessel_slot)
+                cur_vessel_name = _vessel_info.get('name', f'Vessel {target_vessel_slot}')
+                cur_preset = target_preset
+                if messagebox.askyesno("Confirm Load",
+                                       f"Are you sure you want to load preset '{cur_preset_name}' "
+                                       f"into {char_name}'s {cur_vessel_name}?\n\n"
+                                       f"This will overwrite the current relics in that vessel."):
+                    try:
+                        loadout_handler.equip_preset(cur_preset['hero_type'], cur_preset['index'])
+                        save_current_data()
+                        messagebox.showinfo("Success", f"Preset '{cur_preset_name}' loaded successfully!")
+                        self.refresh_inventory_and_vessels()
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Failed to load preset: {str(e)}")
+                
+            # Edit button
+            equip_btn = ttk.Button(btn_frame, text="⚙️ Equip Preset",
+                                    command=lambda pd=preset_data: on_equip_preset(pd['preset'], pd['vessel_slot']))
+            equip_btn.pack(side='right', padx=5)
             edit_btn = ttk.Button(btn_frame, text="✏️ Edit Preset",
                                     command=lambda pd=preset_data: self.edit_preset_relics(pd))
-            edit_btn.pack(side='right')
+            edit_btn.pack(side='right', padx=5)
 
             # Toggle function for collapse/expand
             def make_toggle(cf, cv):
@@ -3845,6 +3928,8 @@ class SaveEditorGUI:
         controls_frame = ttk.Frame(self.inventory_tab)
         controls_frame.pack(fill='x', padx=10, pady=5)
         
+        ttk.Button(controls_frame, text="➕ Add Relic", style='Add.TButton',
+                  command=self.add_relic_tk).pack(side="left", padx=5)
         ttk.Button(controls_frame, text="🔄 Refresh Inventory", command=self.reload_inventory).pack(side='left', padx=5)
         ttk.Button(controls_frame, text="📤 Export to Excel", command=self.export_relics).pack(side='left', padx=5)
         ttk.Button(controls_frame, text="📥 Import from Excel", command=self.import_relics).pack(side='left', padx=5)
@@ -3853,19 +3938,36 @@ class SaveEditorGUI:
         ttk.Button(controls_frame, text="🗑️ Mass Delete Selected", command=self.mass_delete_relics,
                   style='Danger.TButton').pack(side='left', padx=5)
         ttk.Button(controls_frame, text="🔧 Mass Fix", command=self.mass_fix_incorrect_ids).pack(side='left', padx=5)
-        ttk.Button(controls_frame, text="➕ Add Relic", command=self.add_relic_tk).pack(side="left", padx=5)
 
+        # ===========Language Combobox========================
+        lang_frame = ttk.Frame(self.inventory_tab)
+        lang_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(lang_frame, text="Language:").pack(side='left', padx=2)
+        from source_data_handler import LANGUAGE_MAP
+        lang_display_names = list(LANGUAGE_MAP.values())
+
+        self.lang_combobox = ttk.Combobox(lang_frame,
+                                          values=lang_display_names,
+                                          state="readonly",
+                                          width=15)
+        self.lang_combobox.set(LANGUAGE_MAP.get(get_system_language()))
+        self.lang_combobox.pack(side='left', padx=2)
+        self.lang_combobox.bind("<<ComboboxSelected>>",
+                                self.on_language_change)
+        # ====================================================
+
+        legend_frame = ttk.Frame(self.inventory_tab)
+        legend_frame.pack(padx=10, fill='x')
+        
         # Info label
         self.illegal_count_label = ttk.Label(
-            controls_frame,
+            legend_frame,
             text="",
             foreground='red',
             font=('Arial', 9, 'bold')
         )
-        self.illegal_count_label.pack(side='right', padx=10)
-
-        legend_frame = ttk.Frame(controls_frame)
-        legend_frame.pack(side='right', padx=10)
+        self.illegal_count_label.pack(side='left', padx=(0, 15))
 
         ttk.Label(legend_frame, text="Blue = Red + Orange", foreground="blue").pack(side='left', padx=5)
         ttk.Label(legend_frame, text="Red = Illegal", foreground="red").pack(side='left', padx=5)
@@ -3925,24 +4027,6 @@ class SaveEditorGUI:
 
         self.search_info_label = ttk.Label(search_frame, text="", foreground='gray')
         self.search_info_label.pack(side='left', padx=10)
-
-        # ===========Add Language Combobox====================
-        lang_frame = ttk.Frame(search_frame)
-        lang_frame.pack(side='right', padx=5)
-
-        ttk.Label(lang_frame, text="Language:").pack(side='left', padx=2)
-        from source_data_handler import LANGUAGE_MAP
-        lang_display_names = list(LANGUAGE_MAP.values())
-
-        self.lang_combobox = ttk.Combobox(lang_frame,
-                                          values=lang_display_names,
-                                          state="readonly",
-                                          width=15)
-        self.lang_combobox.set(LANGUAGE_MAP.get(get_system_language()))
-        self.lang_combobox.pack(side='left', padx=2)
-        self.lang_combobox.bind("<<ComboboxSelected>>",
-                                self.on_language_change)
-        # ====================================================
         
         # Inventory display
         inv_frame = ttk.Frame(self.inventory_tab)
@@ -4017,7 +4101,8 @@ class SaveEditorGUI:
         action_frame.pack(fill='x', padx=10, pady=5)
         
         ttk.Button(action_frame, text="Modify Selected", command=self.modify_selected_relic).pack(side='left', padx=5)
-        ttk.Button(action_frame, text="Delete Selected", command=self.delete_selected_relic).pack(side='left', padx=5)
+        ttk.Button(action_frame, text="Delete Selected", style='Danger.TButton',
+                   command=self.delete_selected_relic).pack(side='left', padx=5)
         
         # Selection controls
         selection_frame = ttk.Frame(action_frame)
@@ -4025,9 +4110,14 @@ class SaveEditorGUI:
         
         ttk.Button(selection_frame, text="Select All", command=self.select_all_relics).pack(side='left', padx=2)
         ttk.Button(selection_frame, text="Deselect All", command=self.deselect_all_relics).pack(side='left', padx=2)
-        
-        self.selection_count_label = ttk.Label(selection_frame, text="0 selected", foreground='blue', font=('Arial', 9, 'bold'))
+        selection_count_text = tk.StringVar()
+        selection_count_text.set("0 selected")
+        self.selection_count_label = ttk.Label(selection_frame, textvariable=selection_count_text, foreground='blue', font=('Arial', 9, 'bold'))
         self.selection_count_label.pack(side='left', padx=10)
+        def update_selection_count():
+            selected_count = len(self.tree.selection())
+            selection_count_text.set(f"{selected_count} selected")
+        self.tree.bind('<<TreeviewSelect>>', lambda e: update_selection_count())
     
     
     def on_relic_select(self, event):
@@ -5002,10 +5092,19 @@ class SaveEditorGUI:
                 "Warning", "No save file loaded. Please open a save file first."
             )
             return
-
-        if add_relic():
+        added_result, new_ga = add_relic()
+        if added_result:
             messagebox.showinfo("Success", "Dummy relic added. Refreshing inventory.")
             self.refresh_inventory_and_vessels()
+            # Find Added item by new_ga
+            for item in self.tree.get_children():
+                item_ga = int(self.tree.item(item, 'tags')[0])
+                if item_ga == new_ga:
+                    self.tree.selection_set(item)
+                    self.tree.focus(item)
+                    self.tree.see(item)
+                    break
+            self.modify_selected_relic()
         else:
             messagebox.showerror("Error", f"Failed to add relic: {e}")
 
