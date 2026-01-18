@@ -12,7 +12,7 @@ import re
 # project modules
 from basic_class import Item
 import globals
-from globals import (ITEM_TYPE_RELIC, WORKING_DIR)
+from globals import (ITEM_TYPE_RELIC, WORKING_DIR, COLOR_MAP)
 
 from relic_checker import RelicChecker, InvalidReason, is_curse_invalid
 from source_data_handler import SourceDataHandler, get_system_language
@@ -6694,9 +6694,13 @@ class SearchDialog:
         search_entry.pack(side='left', fill='x', expand=True, padx=5)
         search_entry.focus()
         
+        # Warp Result frame and Filter frame
+        warp_frame = ttk.Frame(self.dialog)
+        warp_frame.pack(fill='both',expand=True, padx=10, pady=5)
+        
         # Results listbox
-        results_frame = ttk.Frame(self.dialog)
-        results_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        results_frame = ttk.Frame(warp_frame)
+        results_frame.pack(side='left', fill='both', expand=True, padx=10, pady=5)
         
         scrollbar = ttk.Scrollbar(results_frame)
         scrollbar.pack(side='right', fill='y')
@@ -6707,6 +6711,57 @@ class SearchDialog:
         
         self.listbox.bind('<Double-Button-1>', self.on_select)
         
+        if self.search_type == "relics":
+            # Filter Frame
+            filter_frame = ttk.Frame(warp_frame)
+            filter_frame.pack(side='left', fill='both', padx=10, pady=5)
+            color_row = ttk.Frame(filter_frame)
+            color_row.pack(fill='x')
+            self.lock_color_var = tk.BooleanVar(value=True)
+            checkbox_lock_color = ttk.Checkbutton(color_row, variable=self.lock_color_var,
+                                                onvalue=True, offvalue=False, text="Lock color:")
+            self.color_var = tk.StringVar(value="Red")
+            self.color_int_var = 0
+            
+            def color_map_to_int():
+                self.color_int_var = COLOR_MAP.index(self.color_var.get())
+                
+            combobox_color = ttk.Combobox(color_row, textvariable=self.color_var, values=["Red", "Blue", "Yellow", "Green"],
+                                          width=10, state="readonly")
+            
+            checkbox_lock_color.pack(side='left', padx=5)
+            combobox_color.pack(side='left', padx=5)
+            
+            self.lock_color_var.trace('w', lambda *args: self.filter_results())
+            self.color_var.trace('w', lambda *args: self.filter_results())
+            self.color_var.trace_add('write', color_map_to_int)
+            
+            # Relic Type Row
+            type_row = ttk.Frame(filter_frame)
+            type_row.pack(fill='x', padx=5, pady=5)
+            ttk.Label(type_row, text="Relic Type:").pack(side='left', padx=(19, 5))
+            self.relic_type_var = tk.StringVar(value="All")
+            combobox_type = ttk.Combobox(type_row, textvariable=self.relic_type_var, values=["All", "Deep", "Normal"],
+                                         width=10, state="readonly")
+            combobox_type.pack(side='left', padx=5)
+            self.relic_type_var.trace('w', lambda *args: self.filter_results())
+            
+            # Structure filters
+            ttk.Label(filter_frame, text="Effect Slots:").pack(anchor='w', pady=(10, 0))
+            self.effect_slots_var = tk.StringVar(value="Any")
+            ttk.Radiobutton(filter_frame, text="Any", variable=self.effect_slots_var, value="Any", command=self.filter_results).pack(anchor='w')
+            ttk.Radiobutton(filter_frame, text="1 Effect", variable=self.effect_slots_var, value="1", command=self.filter_results).pack(anchor='w')
+            ttk.Radiobutton(filter_frame, text="2 Effects", variable=self.effect_slots_var, value="2", command=self.filter_results).pack(anchor='w')
+            ttk.Radiobutton(filter_frame, text="3 Effects", variable=self.effect_slots_var, value="3", command=self.filter_results).pack(anchor='w')
+
+            ttk.Label(filter_frame, text="Curse Slots:").pack(anchor='w', pady=(10, 0))
+            self.curse_slots_var = tk.StringVar(value="Any")
+            ttk.Radiobutton(filter_frame, text="Any", variable=self.curse_slots_var, value="Any", command=self.filter_results).pack(anchor='w')
+            ttk.Radiobutton(filter_frame, text="0 Curses", variable=self.curse_slots_var, value="0", command=self.filter_results).pack(anchor='w')
+            ttk.Radiobutton(filter_frame, text="1 Curse", variable=self.curse_slots_var, value="1", command=self.filter_results).pack(anchor='w')
+            ttk.Radiobutton(filter_frame, text="2 Curses", variable=self.curse_slots_var, value="2", command=self.filter_results).pack(anchor='w')
+            ttk.Radiobutton(filter_frame, text="3 Curses", variable=self.curse_slots_var, value="3", command=self.filter_results).pack(anchor='w')
+            
         # Populate initial results
         self.all_items = []
         for item_id, item_data in self.json_data.items():
@@ -6735,6 +6790,25 @@ class SearchDialog:
         self.listbox.delete(0, tk.END)
         
         for item_id, name in self.all_items:
+            # filter by color
+            if self.lock_color_var.get() and data_source.get_relic_color(int(item_id)) != self.color_var.get():
+                continue
+            eff_slots, curse_slots = data_source.get_relic_slot_count(int(item_id))
+            # filter by relic type
+            if self.relic_type_var.get() != "All":
+                if self.relic_type_var.get() == "Normal" and relic_checker.is_deep_relic(int(item_id)):
+                    continue
+                if self.relic_type_var.get() == "Deep" and not relic_checker.is_deep_relic(int(item_id)):
+                    continue
+            # filter by effect slots
+            if self.effect_slots_var.get() != "Any":
+                if self.effect_slots_var.get() != str(eff_slots):
+                    continue
+            # filter by curse slots
+            if self.curse_slots_var.get() != "Any":
+                if self.curse_slots_var.get() != str(curse_slots):
+                    continue
+            
             if search_term in name.lower() or search_term in item_id:
                 self.listbox.insert(tk.END, f"{name} (ID: {item_id})")
     
