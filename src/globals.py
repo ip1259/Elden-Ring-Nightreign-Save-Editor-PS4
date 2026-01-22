@@ -1,17 +1,22 @@
 from pathlib import Path
 import os
+import time
 
 
 # Global variables
 WORKING_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 # In other modules, use globals.data instead of the data variable to avoid naming conflicts.
 data = None
+# To check if the player has vessels
+ga_goods = []  # list[tuple(ga_handle, goodsId)]
+goods_id_list = []  # list[goodsID]
 
 # Items type
 ITEM_TYPE_EMPTY = 0x00000000
 ITEM_TYPE_WEAPON = 0x80000000
 ITEM_TYPE_ARMOR = 0x90000000
 ITEM_TYPE_RELIC = 0xC0000000
+ITEM_TYPE_GOODS = 0xB0000000
 
 # Character names for vessel assignment
 CHARACTER_NAME_ID = [100000, 100030, 100050, 100010, 100040, 100090,
@@ -58,3 +63,11 @@ RELIC_GROUPS: dict[str, tuple[int, int]] = {"store_102": (100, 199),
                                             "deep_102": (2000000, 2009999),
                                             "deep_103": (2010000, 2019999)
                                             }
+
+
+# Function
+def get_now_timestamp():
+    EPOCH_OFFSET = 11644473600
+    now_unix = time.time()
+    filetime_long = int((now_unix + EPOCH_OFFSET) * 1000) * 10000
+    return filetime_long
