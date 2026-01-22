@@ -6,14 +6,16 @@ from source_data_handler import SourceDataHandler
 from relic_checker import RelicChecker
 from basic_class import Item
 import globals
-from globals import ITEM_TYPE_RELIC, COLOR_MAP
+from globals import ITEM_TYPE_RELIC, COLOR_MAP, get_now_timestamp
 
 
-def get_now_timestamp():
-    EPOCH_OFFSET = 11644473600
-    now_unix = time.time()
-    filetime_long = int((now_unix + EPOCH_OFFSET) * 1000) * 10000
-    return filetime_long
+def is_vessel_unlocked(vessel_id: int, game_data: SourceDataHandler):
+    _vessel_data = game_data.antique_stand_param[
+        game_data.antique_stand_param["ID"] == vessel_id][
+            ["goodsId"]
+        ]
+    _vessel_goods_id = _vessel_data['goodsId'].values[0]
+    return _vessel_goods_id in globals.goods_id_list
 
 
 class HeroLoadout:
