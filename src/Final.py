@@ -256,40 +256,54 @@ def parse_inventory_acquisition_order(data_type, items_end_offset):
     return ga_acquisition_order
 
 
-def parse_goods(data_type, name_offset):
+def parse_inventory_section(data_type, name_offset):
     globals.ga_goods = []
     globals.goods_id_list = []
+    globals.ga_relics_list = []
     start_offset = name_offset + 0x5B8  # same section with parse acq order function
     base_size = 12 + 2  # 2 bytes unknown(maybe some kind of flag, sellable or favorite)
     # First 4 bytes: Item last index
     # Followed by Item structures (Base size 14 bytes):
     # - 4 bytes: ga_handle, Composite LE (Byte 0: Type 0xB0=Goods, Bytes 1-3: ID)
     # - 4 bytes: item_quantity
-    # - 4 bytes: unknown
-    # - 2 bytes: unknown
-    last_index = struct.unpack_from("<I", data_type, start_offset)[0]
+    # - 4 bytes: acquisition ID
+    # - 1 byte: bool -> is favorite
+    # - 1 byte: bool -> is sellable
+    counts = struct.unpack_from("<I", data_type, start_offset)[0]
+    MAX_INVENTORY_COUNT = 3071
     cursor = start_offset + 4
     i = 0
-    total_count = 0
-    for i in range(last_index+1):
+    for _ in range(MAX_INVENTORY_COUNT):
+        if cursor >= len(data_type) or i >= counts:
+            break
         ga_handle = struct.unpack_from("<I", data_type, cursor)[0]
-        iten_amount = struct.unpack_from("<I", data_type, cursor + 4)[0]
-        total_count += iten_amount
-        acquisition = struct.unpack_from("<I", data_type, cursor + 8)[0]
-        unknown = struct.unpack_from("<H", data_type, cursor + 12)[0]
-        logger.debug("Item %d at 0x%X: GA Handle=0x%X, Amount=%d, Acquisition=0x%X, Unknown=0x%X",
-                     i, cursor, ga_handle, iten_amount, acquisition, unknown)
         if ga_handle == 0:
             cursor += base_size
             continue
+        
+        iten_amount = struct.unpack_from("<I", data_type, cursor + 4)[0]
+        acquisition = struct.unpack_from("<I", data_type, cursor + 8)[0]
+        is_favorite, is_sellable = struct.unpack_from("<BB", data_type, cursor + 12)
+        logger.debug("Item %d at 0x%X: GA Handle=0x%X, Amount=%d, Acquisition=0x%X, is_favorite=%d, is_sellable=%d",
+                     i, cursor, ga_handle, iten_amount, acquisition, is_favorite, is_sellable)
         type_bits = ga_handle & 0xFF000000
         if type_bits == ITEM_TYPE_GOODS:
             goods_id = ga_handle & 0x00FFFFFF
             globals.ga_goods.append((ga_handle, goods_id))
             globals.goods_id_list.append(goods_id)
+        elif type_bits == ITEM_TYPE_RELIC:
+            globals.ga_relics_list.append(ga_handle)
         cursor += base_size
-    logger.debug("last index of goods items: %d", last_index)
-    logger.debug("total count of goods items: %d", total_count)
+        i += 1
+    logger.debug("counts of goods items: %d", counts)
+    
+
+def debug_ga_relic_check():
+    global ga_relic
+    _ga_handles = [item[0] for item in ga_relic]
+    for ga_handle in globals.ga_relics_list:
+        if ga_handle not in _ga_handles:
+            logger.debug("Relic GA handle 0x%X found in inventory but not in ga_relic parsed items", ga_handle)
 
 
 def gaprint(data_type):
@@ -323,8 +337,8 @@ def gaprint(data_type):
     parse_inventory_acquisition_order(data_type, end_offset)
     
     # Parse goods for check if player had vessel unlocked
-    parse_goods(data_type, end_offset+0x94)  # end_offset+0x94 = name_offset
-
+    parse_inventory_section(data_type, end_offset+0x94)  # end_offset+0x94 = name_offset
+    # debug_ga_relic_check()
     return end_offset
 
 
@@ -1716,7 +1730,7 @@ class SaveEditorGUI:
         global loadout_handler
         # ttk Style setting
         style = ttk.Style()
-        style.configure('Add.TButton', foreground='gray', font=('Arial', 10, 'bold'))
+        style.configure('Add.TButton', foreground='green', font=('Arial', 10, 'bold'))
         style.configure('Danger.TButton', foreground='red', font=('Arial', 10))
         
         _ensure_data_source()
@@ -3902,14 +3916,14 @@ class SaveEditorGUI:
         controls_frame.pack(fill='x', padx=10, pady=5)
         
         ttk.Button(controls_frame, text="➕ Add Relic", style='Add.TButton',
-                  command=self.add_relic_tk).pack(side="left", padx=5)
+                  command=self.add_relic_tk)  # .pack(side="left", padx=5)
         ttk.Button(controls_frame, text="🔄 Refresh Inventory", command=self.reload_inventory).pack(side='left', padx=5)
         ttk.Button(controls_frame, text="📤 Export to Excel", command=self.export_relics).pack(side='left', padx=5)
         ttk.Button(controls_frame, text="📥 Import from Excel", command=self.import_relics).pack(side='left', padx=5)
         ttk.Button(controls_frame, text="🗑️ Delete All Illegal", command=self.delete_all_illegal,
-                  style='Danger.TButton').pack(side='left', padx=5)
+                  style='Danger.TButton')  # .pack(side='left', padx=5)
         ttk.Button(controls_frame, text="🗑️ Mass Delete Selected", command=self.mass_delete_relics,
-                  style='Danger.TButton').pack(side='left', padx=5)
+                  style='Danger.TButton')  # .pack(side='left', padx=5)
         ttk.Button(controls_frame, text="🔧 Mass Fix", command=self.mass_fix_incorrect_ids).pack(side='left', padx=5)
 
         # ===========Language Combobox========================
@@ -4075,14 +4089,14 @@ class SaveEditorGUI:
         
         ttk.Button(action_frame, text="Modify Selected", command=self.modify_selected_relic).pack(side='left', padx=5)
         ttk.Button(action_frame, text="Delete Selected", style='Danger.TButton',
-                   command=self.delete_selected_relic).pack(side='left', padx=5)
+                   command=self.delete_selected_relic)  # .pack(side='left', padx=5)
         
         # Selection controls
         selection_frame = ttk.Frame(action_frame)
         selection_frame.pack(side='left', padx=20)
         
         ttk.Button(selection_frame, text="Select All", command=self.select_all_relics).pack(side='left', padx=2)
-        ttk.Button(selection_frame, text="Deselect All", command=self.deselect_all_relics).pack(side='left', padx=2)
+        ttk.Button(selection_frame, text="Deselect All", command=self.deselect_all_relics)  # .pack(side='left', padx=2)
         selection_count_text = tk.StringVar()
         selection_count_text.set("0 selected")
         self.selection_count_label = ttk.Label(selection_frame, textvariable=selection_count_text, foreground='blue', font=('Arial', 9, 'bold'))
@@ -5060,9 +5074,6 @@ class SaveEditorGUI:
         self.refresh_inventory_lightly()
 
     def add_relic_tk(self):
-        if True:
-            messagebox.showinfo("Info", "Relic adding is currently disabled.")
-            return
         if globals.data is None:
             messagebox.showwarning(
                 "Warning", "No save file loaded. Please open a save file first."
