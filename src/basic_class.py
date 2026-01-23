@@ -1,5 +1,6 @@
 import struct
 from globals import ITEM_TYPE_WEAPON, ITEM_TYPE_ARMOR, ITEM_TYPE_RELIC
+import pandas as pd
 
 
 class Item:
@@ -80,3 +81,50 @@ class Item:
         return cls(gaitem_handle, item_id, effect_1, effect_2, effect_3,
                    durability, unk_1, sec_effect1, sec_effect2, sec_effect3,
                    unk_2, offset, extra=padding, size=size)
+
+
+class AttachEffect:
+    def __init__(self, effect_df: pd.DataFrame, name_df: pd.DataFrame, effect_id: int):
+        self._data_frame = effect_df[effect_df.index == effect_id]
+        self._is_empty_id = effect_id == 0xffffffff
+        self._is_unknown = self._data_frame.empty and not self._is_empty_id
+        self._name_df = name_df
+        self.id = effect_id
+
+    @property
+    def name(self):
+        if self._is_empty_id:
+            return "Empty"
+        elif self._is_unknown:
+            return "Unlnown"
+        else:
+            try:
+                row = self._name_df[self._name_df["id"] == self.text_id]
+                if not row.empty:
+                    return row["text"].values[0]
+            except Exception:
+                return "Unknown"
+
+    @property
+    def conflict_id(self):
+        if self._is_empty_id or self._is_unknown:
+            return -1
+        return self._data_frame["compatibilityId"].values[0]
+
+    @property
+    def text_id(self):
+        if self._is_empty_id or self._is_unknown:
+            return -1
+        return self._data_frame["attachTextId"].values[0]
+
+    @property
+    def sort_id(self):
+        if self._is_empty_id or self._is_unknown:
+            return float('inf')
+        return self._data_frame["overrideEffectId"].values[0]
+
+    def __repr__(self):
+        return f"AttachEffect(id={self.id}, name='{self.name}', conflict_id={self.conflict_id}, text_id={self.text_id}, is_empty_id={self._is_empty_id}, is_unknown={self._is_unknown}, sort_id={self.sort_id})"
+
+    def __str__(self):
+        return f"{self.id}:{self.name}"
