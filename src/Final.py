@@ -165,13 +165,13 @@ def get_vessel_info(char_name, vessel_slot):
     # Try to get vessel data from source_data_handler
     if data_source is not None:
         try:
-            vessel_data_info = data_source.get_vessel_data(vessel_id)
+            vessel_data_info = data_source.vessels.get(vessel_id, None)
             if vessel_data_info:
                 return {
-                    'name': vessel_data_info.get('Name', f'Vessel {vessel_slot}'),
-                    'colors': vessel_data_info.get('Colors', None),
-                    'character': vessel_data_info.get('Character', char_name),
-                    'unlockFlag': vessel_data_info.get('unlockFlag', 0)
+                    'name': vessel_data_info.name,
+                    'colors': vessel_data_info.slot_colors,
+                    'character': vessel_data_info.hero_name,
+                    'unlockFlag': vessel_data_info.unlock_flag
                 }
         except Exception as e:
             logger.error("Error retrieving vessel data for ID %d: %s", vessel_id, e)
@@ -183,7 +183,7 @@ def load_json_data():
     global items_json, effects_json
     _ensure_data_source()  # Lazy init data_source
     try:
-        items_json = data_source.get_relic_origin_structure()
+        items_json = {}
         effects_json = data_source.get_effect_origin_structure()
 
         return True
@@ -200,7 +200,8 @@ def reload_language(language_code):
     global items_json, effects_json, data_source
     _ensure_data_source()  # Lazy init data_source
     result = data_source.reload_text(language_code)
-    items_json = data_source.get_relic_origin_structure()
+    # items_json = data_source.get_relic_origin_structure()
+    items_json = {}
     effects_json = data_source.get_effect_origin_structure()
     return result
 
@@ -686,12 +687,12 @@ def get_character_loadout(char_name):
                 for relic in ga_relic:
                     if len(relic) >= 8 and relic[0] == ga:  # ga_handle match
                         real_id = relic[1] - 2147483648
-                        item_data = items_json.get(str(real_id), {})
+                        item_data = data_source.relics.get(real_id)
                         relic_info = {
                             'ga': ga,
                             'real_id': real_id,
-                            'name': item_data.get('name', f'Unknown ({real_id})'),
-                            'color': item_data.get('color', 'Unknown'),
+                            'name': item_data.name if item_data else 'Unknown',
+                            'color': item_data.color if item_data else 'Unknown',
                             'effects': [relic[2], relic[3], relic[4]],
                             'curses': [relic[5], relic[6], relic[7]]
                         }
@@ -1434,8 +1435,8 @@ def export_relics_to_excel(filepath="relics.xlsx"):
     def get_eff_name(eid):
         if eid in (0, -1, 4294967295):
             return "None"
-        key = str(eid)
-        return effects_json.get(key, {}).get("name", f"UnknownEffect({eid})")
+        eff = data_source.effects.get(eid, None)
+        return eff.name if eff else f"UnknownEffect({eid})"
 
     # Fill sheet
     for (_, item_id, e1, e2, e3, se1, se2, se3, offset, size) in ga_relic:
@@ -1446,9 +1447,9 @@ def export_relics_to_excel(filepath="relics.xlsx"):
         real_id = item_id - 2147483648
         
         # Get relic name
-        item_key = str(real_id)
-        relic_name = items_json.get(item_key, {}).get("name", f"UnknownRelic({real_id})")
-        relic_color = items_json.get(item_key, {}).get("color", "Unknown")
+        item = data_source.relics.get(real_id)
+        relic_name = item.name if item else f"UnknownRelic({real_id})"
+        relic_color = item.color if item else "Unknown"
 
         row = [
             real_id,
@@ -2291,13 +2292,13 @@ class SaveEditorGUI:
                 ga_handle = relic[0]
                 item_id = relic[1]
                 real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                item_info = items_json.get(str(real_id), {})
+                item_info = data_source.relics.get(real_id)
                 is_deep = 2000000 <= real_id <= 2019999
                 effects = [relic[2], relic[3], relic[4]] if len(relic) >= 5 else []
                 curses = [relic[5], relic[6], relic[7]] if len(relic) >= 8 else []
                 ga_to_relic_info[ga_handle] = {
-                    'name': item_info.get('name', f'ID:{real_id}'),
-                    'color': item_info.get('color', 'Unknown'),
+                    'name': item_info.name if item_info else 'Unknown Relic',
+                    'color': item_info.color if item_info else 'Unknown',
                     'real_id': real_id,
                     'is_deep': is_deep,
                     'effects': effects,
@@ -2521,10 +2522,10 @@ class SaveEditorGUI:
                 ga_handle = relic[0]
                 item_id = relic[1]
                 real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                item_info = items_json.get(str(real_id), {})
+                item_info = data_source.relics.get(real_id)
                 ga_to_full_info[ga_handle] = {
-                    'name': item_info.get('name', f'ID:{real_id}'),
-                    'color': item_info.get('color', 'Unknown'),
+                    'name': item_info.name if item_info else f'ID:{real_id}',
+                    'color': item_info.color if item_info else 'Unknown',
                     'real_id': real_id,
                     'effects': [relic[2], relic[3], relic[4]],
                     'curses': [relic[5], relic[6], relic[7]],
@@ -2659,7 +2660,7 @@ class SaveEditorGUI:
         def is_unique_relic(relic_id):
             """Check if a relic is unique (all effect pools contain only 1 effect each)"""
             try:
-                pools = data_source.get_relic_pools_seq(relic_id)
+                pools = data_source.relics[real_id].effect_slots
                 # Check each non-empty effect pool
                 for pool_id in pools[:3]:  # Only check effect pools, not curse pools
                     if pool_id == -1:
@@ -2789,10 +2790,10 @@ class SaveEditorGUI:
                         ga_handle = relic[0]
                         item_id = relic[1]
                         real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                        item_info = items_json.get(str(real_id), {})
+                        item_info = data_source.relics.get(real_id)
                         ga_to_full_info[ga_handle] = {
-                            'name': item_info.get('name', f'ID:{real_id}'),
-                            'color': item_info.get('color', 'Unknown'),
+                            'name': item_info.name if item_info else f'ID:{real_id}',
+                            'color': item_info.color if item_info else 'Unknown',
                             'real_id': real_id,
                             'effects': [relic[2], relic[3], relic[4]],
                             'curses': [relic[5], relic[6], relic[7]],
@@ -2897,7 +2898,7 @@ class SaveEditorGUI:
                 ga_handle = relic[0]
                 item_id = relic[1]
                 real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                item_info = items_json.get(str(real_id), {})
+                item_info = data_source.relics.get(real_id)
                 # Deep relic check: ID range 2000000-2019999
                 is_deep_relic = 2000000 <= real_id <= 2019999
                 # Get effects/curses if available
@@ -2905,8 +2906,8 @@ class SaveEditorGUI:
                 curses = [relic[5], relic[6], relic[7]] if len(relic) >= 8 else [0, 0, 0]
                 all_relics.append({
                     'ga_handle': ga_handle,
-                    'name': item_info.get('name', f'ID:{real_id}'),
-                    'color': item_info.get('color', 'Unknown'),
+                    'name': item_info.name if item_info else f'ID:{real_id}',
+                    'color': item_info.color if item_info else 'Unknown',
                     'effects': effects,
                     'curses': curses,
                     'real_id': real_id,
@@ -3316,10 +3317,10 @@ class SaveEditorGUI:
             ga_handle = relic[0]
             item_id = relic[1]
             real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-            item_info = items_json.get(str(real_id), {})
+            item_info = data_source.relics.get(real_id)
 
-            name = item_info.get('name', f'ID:{real_id}')
-            color = item_info.get('color', 'Unknown')
+            name = item_info.name if item_info else f'ID:{real_id}'
+            color = item_info.color if item_info else 'Unknown'
 
             # Store full relic data for details panel
             relic_data_map[ga_handle] = {
@@ -3664,9 +3665,9 @@ class SaveEditorGUI:
             effects = [relic[2], relic[3], relic[4]]
 
             # Get item info
-            item_data = items_json.get(str(real_id), {})
-            item_name = item_data.get('name', f'Unknown ({real_id})')
-            item_color = item_data.get('color', 'Unknown')
+            item_data = data_source.relics[real_id]
+            item_name = item_data.name if item_data else f"Unknown{real_id}"
+            item_color = item_data.color if item_data else "Unknown"
 
             # Filter by existing relics currently in the vessel
             if ga in [i[0] for i in vessel_relics]:
@@ -3804,7 +3805,8 @@ class SaveEditorGUI:
             if ga == ga_handle:
                 real_id = id_val - 2147483648
                 effects = [e1, e2, e3, se1, se2, se3]
-                item_name = items_json.get(str(real_id), {}).get("name", f"Unknown ({real_id})")
+                _item = data_source.relics.get(real_id)
+                item_name = _item.name if _item else f"Unknown ({real_id})"
                 self.clipboard_effects = (effects, real_id, item_name)
 
                 effect_count = len([e for e in effects if e != 0])
@@ -4372,11 +4374,9 @@ class SaveEditorGUI:
             real_id = id - 2147483648
             
             # Get item name and color
-            item_name = "Unknown"
-            item_color = "Unknown"
-            if str(real_id) in items_json:
-                item_name = items_json[str(real_id)]["name"]
-                item_color = items_json[str(real_id)].get("color", "Unknown")
+            _item = data_source.relics[real_id]
+            item_name = _item.name if _item else "Unknown"
+            item_color = _item.color if _item else "Unknown"
             
             # Get effect names
             effects = [e1, e2, e3, se1, se2, se3]
@@ -4714,7 +4714,8 @@ class SaveEditorGUI:
             real_id = id - 2147483648
             if ga == ga_handle and real_id == item_id:
                 effects = [e1, e2, e3, se1, se2, se3]
-                item_name = items_json.get(str(real_id), {}).get("name", f"Unknown ({real_id})")
+                _item = data_source.relics.get(item_id)
+                item_name = _item.name if _item else f"Unknown ({item_id})"
                 self.clipboard_effects = (effects, real_id, item_name)
                 messagebox.showinfo("Copied", f"Copied effects from:\n{item_name}\n\nEffects: {len([e for e in effects if e != 0])} effect(s)")
                 return
@@ -4738,7 +4739,7 @@ class SaveEditorGUI:
         item_id = int(tags[1])
 
         # Get target relic info
-        target_name = items_json.get(str(item_id), {}).get("name", f"Unknown ({item_id})")
+        target_name = data_source.relics[item_id].name
         source_effects, source_id, source_name = self.clipboard_effects
 
         # Build effect names for display
@@ -4937,7 +4938,8 @@ class SaveEditorGUI:
             if real_id in RelicChecker.UNIQUENESS_IDS:
                 continue
 
-            item_name = items_json.get(str(real_id), {}).get("name", f"Unknown ({real_id})")
+            _relic = data_source.relics.get(real_id)
+            item_name = _relic.name if _relic else f"Unknown ({real_id})"
             is_illegal = ga in relic_checker.illegal_gas
             is_strict_invalid = ga in relic_checker.strict_invalid_gas
 
@@ -4955,7 +4957,8 @@ class SaveEditorGUI:
                 # Try finding a different ID that's strictly valid
                 valid_id = self._find_strictly_valid_relic_id(real_id, effects)
                 if valid_id and valid_id != real_id:
-                    new_name = items_json.get(str(valid_id), {}).get("name", f"Unknown ({valid_id})")
+                    _valid_relic = data_source.relics.get(valid_id)
+                    new_name = _valid_relic.name if _valid_relic else f"Unknown ({valid_id})"
                     strict_order = relic_checker.get_strictly_valid_order(valid_id, effects)
                     if strict_order and not relic_checker.check_invalidity(valid_id, strict_order):
                         fixable_illegal.append((ga, id, real_id, valid_id, item_name, new_name, strict_order, False))
@@ -4964,7 +4967,8 @@ class SaveEditorGUI:
                 # Fall back to just valid (not strictly valid)
                 valid_id = self._find_valid_relic_id_for_effects(real_id, effects)
                 if valid_id is not None:
-                    new_name = items_json.get(str(valid_id), {}).get("name", f"Unknown ({valid_id})")
+                    _valid_relic = data_source.relics.get(valid_id)
+                    new_name = _valid_relic.name if _valid_relic else f"Unknown ({valid_id})"
                     if valid_id == real_id:
                         fixable_illegal.append((ga, id, real_id, valid_id, item_name, f"{new_name} (reorder)", effects, True))
                     else:
@@ -4984,7 +4988,8 @@ class SaveEditorGUI:
                 # Try finding a different ID that's strictly valid
                 valid_id = self._find_strictly_valid_relic_id(real_id, effects)
                 if valid_id and valid_id != real_id:
-                    new_name = items_json.get(str(valid_id), {}).get("name", f"Unknown ({valid_id})")
+                    _valid_relic = data_source.relics.get(valid_id)
+                    new_name = _valid_relic.name if _valid_relic else f"Unknown ({valid_id})"
                     strict_order = relic_checker.get_strictly_valid_order(valid_id, effects)
                     if strict_order and not relic_checker.check_invalidity(valid_id, strict_order):
                         fixable_strict.append((ga, id, real_id, valid_id, item_name, new_name, strict_order, False))
@@ -5089,9 +5094,9 @@ class SaveEditorGUI:
     def _find_valid_relic_id_for_effects(self, current_id, effects):
         """Find a valid relic ID that can have the given effects (must be same color)"""
         # Get the current relic's color
-        if current_id not in data_source.relic_table.index:
+        if current_id not in data_source._relic_table.index:
             return None
-        current_color = data_source.relic_table.loc[current_id, "relicColor"]
+        current_color = data_source._relic_table.loc[current_id, "relicColor"]
 
         # Count how many effects need curses
         curses_needed = sum(1 for e in effects[:3]
@@ -5113,7 +5118,7 @@ class SaveEditorGUI:
         if relic_checker.has_valid_order(current_id, effects):
             # Also check it has enough curse slots for effects that need curses
             try:
-                pools = data_source.get_relic_pools_seq(current_id)
+                pools = data_source.relics[current_id].effect_slots
                 available_curse_slots = sum(1 for p in pools[3:] if p != -1)
                 if available_curse_slots >= curses_needed:
                     return current_id  # Already valid, return same ID
@@ -5122,17 +5127,17 @@ class SaveEditorGUI:
 
         # Search within the same range for a valid ID with SAME color only
         for test_id in range(range_start, range_end + 1):
-            if test_id not in data_source.relic_table.index:
+            if test_id not in data_source._relic_table.index:
                 continue
 
             # Must be same color - never change color
-            test_color = data_source.relic_table.loc[test_id, "relicColor"]
+            test_color = data_source._relic_table.loc[test_id, "relicColor"]
             if test_color != current_color:
                 continue
 
             # Check if relic has enough curse slots for effects that need curses
             try:
-                pools = data_source.get_relic_pools_seq(test_id)
+                pools = data_source.relics[test_id].effect_slots
                 available_curse_slots = sum(1 for p in pools[3:] if p != -1)
                 if available_curse_slots < curses_needed:
                     continue
@@ -5147,9 +5152,9 @@ class SaveEditorGUI:
 
     def _find_strictly_valid_relic_id(self, current_id, effects):
         """Find a relic ID where effects can be strictly valid (same color)"""
-        if current_id not in data_source.relic_table.index:
+        if current_id not in data_source._relic_table.index:
             return None
-        current_color = data_source.relic_table.loc[current_id, "relicColor"]
+        current_color = data_source._relic_table.loc[current_id, "relicColor"]
 
         # Get range
         id_range = relic_checker.find_id_range(current_id)
@@ -5164,10 +5169,10 @@ class SaveEditorGUI:
         for test_id in range(range_start, range_end + 1):
             if test_id == current_id:
                 continue
-            if test_id not in data_source.relic_table.index:
+            if test_id not in data_source._relic_table.index:
                 continue
 
-            test_color = data_source.relic_table.loc[test_id, "relicColor"]
+            test_color = data_source._relic_table.loc[test_id, "relicColor"]
             if test_color != current_color:
                 continue
 
@@ -5348,7 +5353,7 @@ class ModifyRelicDialog:
                      2: ("Yellow", "#cccc00"), 3: ("Green", "#66cc66")}
         try:
             current_relic_id = int(self.item_id_entry.get())
-            color_idx = data_source.relic_table.loc[current_relic_id, "relicColor"]
+            color_idx = data_source._relic_table.loc[current_relic_id, "relicColor"]
             color_name, color_hex = color_map.get(color_idx, ("Unknown", "gray"))
             self.current_color_label.config(text=color_name, foreground=color_hex)
         except (KeyError, ValueError):
@@ -5358,7 +5363,7 @@ class ModifyRelicDialog:
         """Update the relic structure label showing effect/curse slots"""
         try:
             current_relic_id = int(self.item_id_entry.get())
-            pools = data_source.get_relic_pools_seq(current_relic_id)
+            pools = data_source.relics[current_relic_id].effect_slots
 
             # Count effect slots and curse slots
             effect_slots = sum(1 for p in pools[:3] if p != -1)
@@ -5396,7 +5401,7 @@ class ModifyRelicDialog:
             return
 
         try:
-            pools = data_source.get_relic_pools_seq(relic_id)
+            pools = data_source.relics[relic_id].effect_slots
         except KeyError:
             self.status_label.config(text="❌ ILLEGAL: Unknown Relic ID", foreground='red')
             self.illegal_reason_label.config(text=f"Relic ID {relic_id} does not exist in the game data.")
@@ -5539,7 +5544,7 @@ class ModifyRelicDialog:
 
             # Get relic pools
             try:
-                pools = data_source.get_relic_pools_seq(relic_id)
+                pools = data_source.relics[relic_id].effect_slots
                 lines.append(f"Pools (eff1,eff2,eff3,curse1,curse2,curse3): {pools}")
             except KeyError:
                 lines.append(f"Pools: Relic ID {relic_id} not found in table!")
@@ -5959,14 +5964,14 @@ class ModifyRelicDialog:
     
     def search_items(self):
         """Open search dialog for items"""
-        _items = {}
+        _items = []
         if self.safe_mode_var.get():
             _safe_range = data_source.get_safe_relic_ids() if relic_checker else []
-            _df = data_source.relic_table.copy()
+            _df = data_source._relic_table.copy()
             _df = _df[_df.index.isin(_safe_range)]
-            _items = data_source.cvrt_filtered_relic_origin_structure(_df)
+            _items = _df.index.to_list()
         else:
-            _items = items_json
+            _items = [int(k) for k in data_source.relics.keys()]
         SearchDialog(self.dialog, self.item_id, "relics", _items, "Select Relic", self.on_item_selected)
 
     def find_valid_relic_ids(self, relic_id, effects, color):
@@ -6046,7 +6051,7 @@ class ModifyRelicDialog:
             # Get current relic's color and deep status
             current_relic_id = int(self.item_id_entry.get())
             try:
-                current_color = data_source.relic_table.loc[current_relic_id, "relicColor"]
+                current_color = data_source._relic_table.loc[current_relic_id, "relicColor"]
             except KeyError:
                 current_color = None
             valid_candidates = self.find_valid_relic_ids(current_relic_id, current_effects, current_color)
@@ -6063,11 +6068,12 @@ class ModifyRelicDialog:
                 self.item_id_var.set(str(best_match))
 
                 # Get the name for display
-                relic_name = items_json.get(str(best_match), {}).get("name", "Unknown")
-                relic_color = items_json.get(str(best_match), {}).get("color", "Unknown")
+                _relic = data_source.relics.get(best_match)
+                relic_name = _relic.name if _relic else "Unknown"
+                relic_color = _relic.color if _relic else "Unknown"
 
                 # Get the new relic's curse slot configuration
-                new_pools = data_source.get_relic_pools_seq(best_match)
+                new_pools = data_source.relics[best_match].effect_slots
                 curse_slots_info = []
                 for i in range(3):
                     if new_pools[i + 3] != -1:
@@ -6125,7 +6131,7 @@ class ModifyRelicDialog:
 
             # Check if current relic is already valid for these effects
             try:
-                current_pools = data_source.get_relic_pools_seq(current_relic_id)
+                current_pools = data_source.relics[current_relic_id].effect_slots
                 invalid_reason = relic_checker.check_invalidity(current_relic_id, current_effects)
                 if not invalid_reason and not relic_checker.is_strict_invalid(current_relic_id, current_effects, invalid_reason):
                     # Current relic is fine, no change needed
@@ -6135,7 +6141,7 @@ class ModifyRelicDialog:
 
             # Get current relic's color
             try:
-                current_color = data_source.relic_table.loc[current_relic_id, "relicColor"]
+                current_color = data_source._relic_table.loc[current_relic_id, "relicColor"]
             except KeyError:
                 current_color = None
 
@@ -6316,7 +6322,7 @@ class ModifyRelicDialog:
             # Get current relic's color to check if already the target
             current_relic_id = int(self.item_id_entry.get())
             try:
-                current_color = data_source.relic_table.loc[current_relic_id, "relicColor"]
+                current_color = data_source._relic_table.loc[current_relic_id, "relicColor"]
                 if current_color == target_color:
                     messagebox.showinfo("Info", f"Relic is already {target_color_name}!")
                     return
@@ -6331,7 +6337,8 @@ class ModifyRelicDialog:
                 self.item_id_var.set(str(best_match))
 
                 # Get the name for display
-                relic_name = items_json.get(str(best_match), {}).get("name", "Unknown")
+                _relic = data_source.relics.get(best_match)
+                relic_name = _relic.name if _relic else f"UnknownRelic_{best_match}"
 
                 messagebox.showinfo(
                     "Color Changed",
@@ -6356,7 +6363,7 @@ class ModifyRelicDialog:
 
     def search_effects(self, effect_index):
         """Open search dialog for effects"""
-        _items = {}
+        _items = []
         is_curse_slot = effect_index >= 3
 
         if self.safe_mode_var.get():
@@ -6399,21 +6406,21 @@ class ModifyRelicDialog:
                 )
                 return
 
-            _effect_params_df = data_source.effect_params.copy()
+            _effect_params_df = data_source._effect_params.copy()
             _effect_params_df = _effect_params_df[_effect_params_df.index.isin(_pool_effects)]
             match effect_index:
                 case 1:
                     _effect_id_1 = int(self.effect_entries[0].get())
-                    _conflic_id_1 = data_source.get_effect_conflict_id(_effect_id_1)
+                    _conflic_id_1 = data_source.effects[_effect_id_1].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         (_effect_params_df["compatibilityId"] != _conflic_id_1)
                     ]
                 case 2:
                     _effect_id_1 = int(self.effect_entries[0].get())
-                    _conflic_id_1 = data_source.get_effect_conflict_id(_effect_id_1)
+                    _conflic_id_1 = data_source.effects[_effect_id_1].conflict_id
                     _effect_id_2 = int(self.effect_entries[1].get())
-                    _conflic_id_2 = data_source.get_effect_conflict_id(_effect_id_2)
+                    _conflic_id_2 = data_source.effects[_effect_id_2].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         ((_effect_params_df["compatibilityId"] != _conflic_id_1) &
@@ -6421,28 +6428,28 @@ class ModifyRelicDialog:
                     ]
                 case 4:
                     _effect_id_4 = int(self.effect_entries[3].get())
-                    _conflic_id_4 = data_source.get_effect_conflict_id(_effect_id_4)
+                    _conflic_id_4 = data_source.effects[_effect_id_4].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         (_effect_params_df["compatibilityId"] != _conflic_id_4)
                     ]
                 case 5:
                     _effect_id_4 = int(self.effect_entries[3].get())
-                    _conflic_id_4 = data_source.get_effect_conflict_id(_effect_id_4)
+                    _conflic_id_4 = data_source.effects[_effect_id_4].conflict_id
                     _effect_id_5 = int(self.effect_entries[4].get())
-                    _conflic_id_5 = data_source.get_effect_conflict_id(_effect_id_5)
+                    _conflic_id_5 = data_source.effects[_effect_id_5].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         ((_effect_params_df["compatibilityId"] != _conflic_id_4) &
                          (_effect_params_df["compatibilityId"] != _conflic_id_5))
                     ]
-            _items = data_source.cvrt_filtered_effect_origin_structure(_effect_params_df)
+            _items = _effect_params_df.index.tolist()
         else:
-            _items = effects_json
+            _items = [int(k) for k in data_source.effects.keys()]
 
         # For curse slots, add "No Curse (Empty)" option at the top
         if is_curse_slot:
-            _items = {"4294967295": {"name": "🚫 No Curse (Empty)"}, **_items}
+            _items = _items.insert(0, 0xffffffff)
 
         # Build dialog title with relic type info in safe mode
         if self.safe_mode_var.get():
@@ -6542,8 +6549,8 @@ class ModifyRelicDialog:
 
 class SearchDialog:
     """Search dialog for JSON items"""
-    def __init__(self, parent, item_id, search_type, json_data, title, callback):
-        self.json_data = json_data
+    def __init__(self, parent, item_id, search_type, id_list, title, callback):
+        self.id_list = id_list
         self.callback = callback
         self.search_type = search_type
         self.item_id = item_id
@@ -6595,7 +6602,7 @@ class SearchDialog:
             self.lock_color_var = tk.BooleanVar(value=True)
             checkbox_lock_color = ttk.Checkbutton(color_row, variable=self.lock_color_var,
                                                 onvalue=True, offvalue=False, text="Lock color:")
-            cur_color = data_source.get_relic_color(self.item_id)
+            cur_color = data_source.relics[self.item_id].color
             
             self.color_var = tk.StringVar(value=cur_color)
             self.color_int_var = 0
@@ -6641,15 +6648,15 @@ class SearchDialog:
             
         # Populate initial results
         self.all_items = []
-        for item_id, item_data in self.json_data.items():
-            name = item_data.get('name', 'Unknown')
+        for item_id in self.id_list:
             item_str = ""
             if self.search_type == "effects":
-                item_str = name
+                item_str = data_source.effects[int(item_id)].name
             elif self.search_type == "relics":
+                name = data_source.relics[int(item_id)].name
                 relic_slot = data_source.get_relic_slot_count(int(item_id))
                 item_str = f"{name} (effects: {relic_slot[0]}, curses:{relic_slot[1]})"
-            self.all_items.append((item_id, item_str))
+            self.all_items.append((str(item_id), item_str))
         
         self.all_items.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 0)
         self.filter_results()
@@ -6669,7 +6676,7 @@ class SearchDialog:
         for item_id, name in self.all_items:
             if self.search_type == "relics":
                 # filter by color
-                if self.lock_color_var.get() and data_source.get_relic_color(int(item_id)) != self.color_var.get():
+                if self.lock_color_var.get() and data_source.relics[int(item_id)].color != self.color_var.get():
                     continue
                 eff_slots, curse_slots = data_source.get_relic_slot_count(int(item_id))
                 # filter by relic type
