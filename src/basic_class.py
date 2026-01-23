@@ -1,5 +1,5 @@
 import struct
-from globals import ITEM_TYPE_WEAPON, ITEM_TYPE_ARMOR, ITEM_TYPE_RELIC
+from globals import ITEM_TYPE_WEAPON, ITEM_TYPE_ARMOR, ITEM_TYPE_RELIC, CHARACTER_NAME_ID, COLOR_MAP
 import pandas as pd
 
 
@@ -125,6 +125,181 @@ class AttachEffect:
 
     def __repr__(self):
         return f"AttachEffect(id={self.id}, name='{self.name}', conflict_id={self.conflict_id}, text_id={self.text_id}, is_empty_id={self._is_empty_id}, is_unknown={self._is_unknown}, sort_id={self.sort_id})"
+
+    def __str__(self):
+        return f"{self.id}:{self.name}"
+
+
+class Relic:
+    def __init__(self, relic_df: pd.DataFrame, name_df: pd.DataFrame, relic_id: int):
+        self._relic_df = relic_df[relic_df.index == relic_id]
+        self._name_df = name_df
+        self._is_empty_id = relic_id == 0x00000000
+        self._is_unknown = self._relic_df.empty and not self._is_empty_id
+        self.id = relic_id
+
+    @property
+    def name(self):
+        if self._is_empty_id:
+            return "Empty"
+        elif self._is_unknown:
+            return "Unknown"
+        else:
+            try:
+                row = self._name_df[self._name_df["id"] == self.id]
+                if not row.empty:
+                    return row["text"].values[0]
+            except Exception:
+                return "Unknown"
+
+    @property
+    def color(self):
+        if self._is_empty_id:
+            return "Red"
+        elif self._is_unknown:
+            return "Red"
+        else:
+            try:
+                color_id = self._relic_df["relicColor"].values[0]
+                color_map = {
+                    0: "Red",
+                    1: "Blue",
+                    2: "Yellow",
+                    3: "Green",
+                    4: "White"
+                }
+                return color_map[color_id]
+            except Exception:
+                return "Red"
+
+    @property
+    def color_id(self):
+        if self._is_empty_id:
+            return 0
+        elif self._is_unknown:
+            return 0
+        else:
+            try:
+                color_id = self._relic_df["relicColor"].values[0]
+                return color_id
+            except Exception:
+                return 0
+
+    @property
+    def effect_slots(self):
+        if self._is_empty_id or self._is_unknown:
+            return [-1, -1, -1, -1, -1, -1]
+        try:
+            slots = [
+                int(self._relic_df["attachEffectTableId_1"].values[0]),
+                int(self._relic_df["attachEffectTableId_2"].values[0]),
+                int(self._relic_df["attachEffectTableId_3"].values[0]),
+                int(self._relic_df["attachEffectTableId_curse1"].values[0]),
+                int(self._relic_df["attachEffectTableId_curse2"].values[0]),
+                int(self._relic_df["attachEffectTableId_curse3"].values[0])
+            ]
+            return slots
+        except Exception:
+            return [-1, -1, -1, -1, -1, -1]
+
+    def __repr__(self):
+        return f"Relic(id={self.id}, name='{self.name}', color='{self.color}', is_empty_id={self._is_empty_id}, is_unknown={self._is_unknown}, effect_slots={self.effect_slots})"
+
+    def __str__(self):
+        return f"{self.id}:{self.name}"
+
+
+class Vessel:
+    def __init__(self, df: pd.DataFrame, name_df: pd.DataFrame, vessel_id: int, npc_name_df: pd.DataFrame):
+        self._df = df[df["ID"] == vessel_id]
+        self._name_df = name_df
+        self._npc_name_df = npc_name_df
+        self.is_unknown = self._df.empty
+        self.id = vessel_id
+
+    @property
+    def name(self):
+        if self.is_unknown:
+            return "Unknown"
+        else:
+            try:
+                goods_id = self._df["goodsId"].values[0]
+                row = self._name_df[self._name_df["id"] == goods_id]
+                if not row.empty:
+                    return row["text"].values[0]
+            except Exception:
+                return "Unknown"
+
+    @property
+    def hero_type(self):
+        if self.is_unknown:
+            return -1
+        return self._df["heroType"].values[0]
+
+    @property
+    def goods_id(self):
+        if self.is_unknown:
+            return -1
+        return self._df["goodsId"].values[0]
+
+    @property
+    def hero_name(self):
+        if self.is_unknown:
+            return "Unknown"
+        else:
+            try:
+                hero_index = self._df["heroType"].values[0]-1
+                if hero_index == 10:
+                    return "ALL"
+                hero_id = CHARACTER_NAME_ID[hero_index]
+                row = self._npc_name_df[self._npc_name_df["id"] == hero_id]
+                if not row.empty:
+                    return row["text"].values[0]
+            except Exception:
+                return "Unknown"
+
+    @property
+    def unlock_flag(self):
+        if self.is_unknown:
+            return -1
+        return self._df["unlockFlag"].values[0]
+
+    @property
+    def relic_slots(self):
+        if self.is_unknown:
+            return (-1, -1, -1, -1, -1, -1)
+        try:
+            slots = (
+                int(self._df["relicSlot1"].values[0]),
+                int(self._df["relicSlot2"].values[0]),
+                int(self._df["relicSlot3"].values[0]),
+                int(self._df["deepRelicSlot1"].values[0]),
+                int(self._df["deepRelicSlot2"].values[0]),
+                int(self._df["deepRelicSlot3"].values[0])
+            )
+            return slots
+        except Exception:
+            return (-1, -1, -1, -1, -1, -1)
+        
+    @property
+    def slot_colors(self):
+        if self.is_unknown:
+            return ["Unknown", "Unknown", "Unknown", "Unknown", "Unknown", "Unknown"]
+        try:
+            slots = [
+                COLOR_MAP[int(self._df["relicSlot1"].values[0])],
+                COLOR_MAP[int(self._df["relicSlot2"].values[0])],
+                COLOR_MAP[int(self._df["relicSlot3"].values[0])],
+                COLOR_MAP[int(self._df["deepRelicSlot1"].values[0])],
+                COLOR_MAP[int(self._df["deepRelicSlot2"].values[0])],
+                COLOR_MAP[int(self._df["deepRelicSlot3"].values[0])]
+            ]
+            return slots
+        except Exception:
+            return ["Unknown", "Unknown", "Unknown", "Unknown", "Unknown", "Unknown"]
+
+    def __repr__(self):
+        return f"Vessel(id={self.id}, name='{self.name}', hero_type={self.hero_type}, goods_id={self.goods_id}, hero_name='{self.hero_name}', unlock_flag={self.unlock_flag}, relic_slots={self.relic_slots})"
 
     def __str__(self):
         return f"{self.id}:{self.name}"
