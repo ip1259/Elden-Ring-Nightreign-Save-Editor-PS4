@@ -4,6 +4,7 @@ from typing import Optional, Union
 import locale
 
 from globals import COLOR_MAP, LANGUAGE_MAP, CHARACTER_NAME_ID, CHARACTER_NAMES, RELIC_GROUPS
+from basic_class import AttachEffect
 
 
 def get_system_language():
@@ -105,6 +106,8 @@ class SourceDataHandler:
         self._scene_relic_ids: set = set()
         self.vessel_names: Optional[pd.DataFrame] = None
         self._load_text(language)
+        self.effects:dict[int, AttachEffect] = {}
+        self._set_effects()
 
     def _load_text(self, language: str = "en_US"):
         support_languages = LANGUAGE_MAP.keys()
@@ -174,12 +177,37 @@ class SourceDataHandler:
             else:
                 _goods_names = pd.concat([_goods_names, _df])
 
-        self.vessel_names = _goods_names[(9600 <= _goods_names["id"]) &
-                                         (_goods_names["id"] <= 9956) &
-                                         (_goods_names["text"] != "%null%")]
-        self.npc_name = _npc_names
-        self.relic_name = _relic_names
-        self.effect_name = _effect_names
+        _vessel_names = _goods_names[(9600 <= _goods_names["id"]) &
+                                     (_goods_names["id"] <= 9956) &
+                                     (_goods_names["text"] != "%null%")]
+        if self.vessel_names is None:
+            self.vessel_names = _vessel_names
+        else:
+            _vessel_names.set_index('id')
+            self.vessel_names.set_index('id')
+            self.vessel_names.update(_vessel_names)
+            self.vessel_names.reset_index()
+        if self.npc_name is None:
+            self.npc_name = _npc_names
+        else:
+            self.npc_name.set_index('id')
+            _npc_names.set_index('id')
+            self.npc_name.update(_npc_names)
+            self.npc_name.reset_index()
+        if self.relic_name is None:
+            self.relic_name = _relic_names
+        else:
+            self.relic_name.set_index('id')
+            _relic_names.set_index('id')
+            self.relic_name.update(_relic_names)
+            self.relic_name.reset_index()
+        if self.effect_name is None:
+            self.effect_name = _effect_names
+        else:
+            self.effect_name.set_index('id')
+            _effect_names.set_index('id')
+            self.effect_name.update(_effect_names)
+            self.effect_name.reset_index()
 
     def reload_text(self, language: str = "en_US"):
         try:
@@ -191,6 +219,18 @@ class SourceDataHandler:
         except KeyError:
             self._load_text()
             return False
+
+    def _set_effects(self):
+        # Empty effect first
+        self.effects[0xffffffff] = AttachEffect(self.effect_params,
+                                                self.effect_name,
+                                                0xffffffff)
+        # Iterate through the entire effect param DataFrame
+        for index, row in self.effect_params.iterrows():
+            effect_id = index
+            self.effects[effect_id] = AttachEffect(self.effect_params,
+                                                   self.effect_name,
+                                                   effect_id)
 
     def get_support_languages_name(self):
         return LANGUAGE_MAP.values()
@@ -400,7 +440,10 @@ class SourceDataHandler:
         if self.effect_name is None:
             self._load_text()
         try:
-            row = self.effect_name[self.effect_name["id"] == effect_id]
+            text_id = self.effect_params[self.effect_params.index == effect_id][
+                ["attachTextId"]
+            ].values[0]
+            row = self.effect_name[self.effect_name["id"] == text_id]
             if not row.empty:
                 return row["text"].values[0]
         except Exception:
@@ -631,6 +674,8 @@ class SourceDataHandler:
 
 
 if __name__ == "__main__":
-    source_data_handler = SourceDataHandler("zh_TW")
-    t = source_data_handler.get_vessel_data(1000)
-    print(t)
+    source_data_handler = SourceDataHandler()
+    t = source_data_handler.effects[7040000]
+    print(repr(t))
+    source_data_handler.reload_text("zh_TW")
+    print(repr(t))
