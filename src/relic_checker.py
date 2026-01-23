@@ -592,22 +592,20 @@ class RelicChecker:
                 effect_pool = pools[idx]
                 curse_pool = pools[idx + 3]
 
-                # Skip empty effects
-                if effect in [-1, 0, 4294967295]:
-                    continue
+                # Check pool id -1 must be Empty Effect/Curse
+                if effect_pool == -1 and effect not in [-1, 0, 4294967295]:
+                    sequence_strict_valid = False
+                    break
+
+                if curse_pool == -1 and curse not in [-1, 0, 4294967295]:
+                    sequence_strict_valid = False
+                    break
 
                 # Check effect is valid in the pool (any pool, not just deep)
                 pool_effects = self.data_source.get_pool_effects_strict(effect_pool)
                 if effect not in pool_effects:
                     sequence_strict_valid = False
                     break
-
-                # For deep pools, also check strict validity
-                if effect_pool in deep_pools:
-                    specific_pool_effects = self.data_source.get_pool_effects_strict(effect_pool)
-                    if effect not in specific_pool_effects:
-                        sequence_strict_valid = False
-                        break
 
                 # Check curse requirements
                 if self.data_source.effect_needs_curse(effect):
