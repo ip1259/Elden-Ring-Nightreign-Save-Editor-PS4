@@ -184,7 +184,7 @@ def load_json_data():
     _ensure_data_source()  # Lazy init data_source
     try:
         items_json = {}
-        effects_json = data_source.get_effect_origin_structure()
+        effects_json = {}
 
         return True
 
@@ -202,7 +202,7 @@ def reload_language(language_code):
     result = data_source.reload_text(language_code)
     # items_json = data_source.get_relic_origin_structure()
     items_json = {}
-    effects_json = data_source.get_effect_origin_structure()
+    effects_json = {}
     return result
 
 
@@ -2212,8 +2212,8 @@ class SaveEditorGUI:
                             effect_names.append("None")
                         elif eff == 4294967295:
                             effect_names.append("Empty")
-                        elif str(eff) in effects_json:
-                            eff_name = effects_json[str(eff)]["name"].replace('\n', ' ').strip()
+                        elif eff in data_source.effects:
+                            eff_name = data_source.effects[eff].name.replace('\n', ' ').strip()
                             effect_names.append(eff_name)
                         else:
                             effect_names.append(f"Unknown")
@@ -2345,16 +2345,18 @@ class SaveEditorGUI:
 
                         # Collect effects for this relic
                         effects = []
-                        for eff in relic_info.get('effects', []):
-                            if eff and eff not in [0, -1, 4294967295]:
-                                eff_name = effects_json.get(str(eff), {}).get('name', f'Effect {eff}')
+                        for eff_id in relic_info.get('effects', []):
+                            if eff_id and eff_id not in [0, -1, 4294967295]:
+                                eff = data_source.effects.get(eff_id)
+                                eff_name = eff.name if eff else f'Effect {eff_id}'
                                 effects.append(eff_name)
 
                         # Collect curses for this relic
                         curses = []
-                        for curse in relic_info.get('curses', []):
-                            if curse and curse not in [0, -1, 4294967295]:
-                                curse_name = effects_json.get(str(curse), {}).get('name', f'Curse {curse}')
+                        for curse_id in relic_info.get('curses', []):
+                            if curse_id and curse_id not in [0, -1, 4294967295]:
+                                _curse = data_source.effects.get(curse_id)
+                                curse_name = _curse.name if _curse else f'Curse {curse_id}'
                                 curses.append(curse_name)
 
                         relics_with_effects.append((relic_name, color, is_deep, effects, curses))
@@ -2557,7 +2559,8 @@ class SaveEditorGUI:
         def get_effect_name(eff_id):
             if eff_id in [0, -1, 4294967295]:
                 return None
-            return effects_json.get(str(eff_id), {}).get('name', f'Unknown ({eff_id})')
+            eff = data_source.effects.get(eff_id)
+            return eff.name if eff else f'Unknown ({eff_id})'
 
         # ============ LEFT PANEL ============
         left_panel = tk.Frame(dialog, bg=BG_DARK, width=420)
@@ -3250,7 +3253,8 @@ class SaveEditorGUI:
         def get_effect_name(eff_id):
             if eff_id in [0, -1, 4294967295]:
                 return None
-            return effects_json.get(str(eff_id), {}).get('name', f'Unknown ({eff_id})')
+            eff = data_source.effects.get(eff_id)
+            return eff.name if eff else f'Unknown ({eff_id})'
 
         def update_details(event=None):
             """Update details panel when selection changes"""
@@ -3704,9 +3708,9 @@ class SaveEditorGUI:
             if search_lower:
                 # Search in name, ID, or effects
                 effect_names = []
-                for eff in effects:
-                    if str(eff) in effects_json:
-                        effect_names.append(effects_json[str(eff)].get('name', '').lower())
+                for eff_id in effects:
+                    if eff_id in data_source.effects:
+                        effect_names.append(data_source.effects[eff_id].name.lower())
 
                 searchable = f"{item_name.lower()} {real_id} {' '.join(effect_names)}"
                 if search_lower not in searchable:
@@ -3714,13 +3718,13 @@ class SaveEditorGUI:
 
             # Get effect names
             effect_displays = []
-            for eff in effects:
-                if eff == 0:
+            for eff_id in effects:
+                if eff_id == 0:
                     effect_displays.append("None")
-                elif eff == 4294967295:
+                elif eff_id == 4294967295:
                     effect_displays.append("Empty")
-                elif str(eff) in effects_json:
-                    effect_displays.append(effects_json[str(eff)].get('name', 'Unknown')[:20])
+                elif eff_id in data_source.effects:
+                    effect_displays.append(data_source.effects[eff_id].name[:20])
                 else:
                     effect_displays.append("Unknown")
 
@@ -4127,7 +4131,6 @@ class SaveEditorGUI:
         selected_name = self.lang_combobox.get()
         from source_data_handler import LANGUAGE_MAP
         lang_code = next((code for code, name in LANGUAGE_MAP.items() if name == selected_name), "en_US")
-        global data_source, items_json, effects_json
         if reload_language(lang_code):
             self.refresh_inventory_and_vessels()
         else:
@@ -4382,16 +4385,16 @@ class SaveEditorGUI:
             effects = [e1, e2, e3, se1, se2, se3]
             effect_names = []
             
-            for eff in effects:
-                if eff == 0:
+            for eff_id in effects:
+                if eff_id == 0:
                     effect_names.append("None")
-                elif eff == 4294967295:
+                elif eff_id == 4294967295:
                     effect_names.append("Empty")
-                elif str(eff) in effects_json:
+                elif eff_id in data_source.effects:
                     effect_names.append(
-                        "".join(effects_json[str(eff)]["name"].splitlines()))
+                        "".join(data_source.effects[eff_id].name.splitlines()))
                 else:
-                    effect_names.append(f"Unknown ({eff})")
+                    effect_names.append(f"Unknown ({eff_id})")
             
             # Check if this relic is illegal or forbidden
             is_illegal = ga in illegal_gas
@@ -4744,9 +4747,10 @@ class SaveEditorGUI:
 
         # Build effect names for display
         effect_names = []
-        for eff in source_effects:
-            if eff != 0:
-                eff_name = effects_json.get(str(eff), {}).get("name", f"Unknown ({eff})")
+        for eff_id in source_effects:
+            if eff_id != 0:
+                eff = data_source.effects.get(eff_id)
+                eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 effect_names.append(eff_name)
 
         # Confirm paste
@@ -5338,8 +5342,8 @@ class ModifyRelicDialog:
                 entry.insert(0, str(current_eff))
 
                 # Also update the name display
-                if str(current_eff) in effects_json:
-                    name = effects_json[str(current_eff)]["name"]
+                if current_eff in data_source.effects:
+                    name = data_source.effects[current_eff].name
                     self.effect_name_labels[i].config(text=name)
                 else:
                     self.effect_name_labels[i].config(text="Unknown Effect")
@@ -5461,8 +5465,9 @@ class ModifyRelicDialog:
         # Add specific details for effect/curse pool issues
         if invalid_reason == InvalidReason.EFF_NOT_IN_ROLLABLE_POOL:
             if invalid_idx >= 0 and invalid_idx < 3:
-                eff = effects[invalid_idx]
-                eff_name = effects_json.get(str(eff), {}).get("name", f"Unknown ({eff})")
+                eff_id = effects[invalid_idx]
+                eff = data_source.effects.get(eff_id)
+                eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 # Check if effect can exist on this relic type at all
                 all_relic_pools = set(p for p in pools[:3] if p != -1)
                 can_exist = any(eff in data_source.get_pool_rollable_effects(p) for p in all_relic_pools)
@@ -5475,16 +5480,18 @@ class ModifyRelicDialog:
 
         if invalid_reason == InvalidReason.EFF_MUST_EMPTY:
             if invalid_idx >= 0 and invalid_idx < 3:
-                eff = effects[invalid_idx]
-                eff_name = effects_json.get(str(eff), {}).get("name", f"Unknown ({eff})")
+                eff_id = effects[invalid_idx]
+                eff = data_source.effects.get(eff_id)
+                eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 reasons.append(f"• Effect slot {invalid_idx + 1} should be empty but has '{eff_name}'")
             else:
                 reasons.append("• An effect slot should be empty but has a value")
 
         if invalid_reason == InvalidReason.CURSE_MUST_EMPTY:
             if invalid_idx >= 3:
-                curse = effects[invalid_idx]
-                curse_name = effects_json.get(str(curse), {}).get("name", f"Unknown ({curse})")
+                curse_id = effects[invalid_idx]
+                curse = data_source.effects.get(curse_id)
+                curse_name = curse.name if curse else f"Unknown ({curse_id})"
                 slot_num = invalid_idx - 2  # Convert to 1-based curse slot
                 reasons.append(f"• Curse slot {slot_num} should be empty but has '{curse_name}'")
             else:
@@ -5493,16 +5500,18 @@ class ModifyRelicDialog:
         if invalid_reason == InvalidReason.CURSE_REQUIRED_BY_EFFECT:
             if invalid_idx >= 3:
                 eff_idx = invalid_idx - 3
-                eff = effects[eff_idx]
-                eff_name = effects_json.get(str(eff), {}).get("name", f"Unknown ({eff})")
+                eff_id = effects[eff_idx]
+                eff = data_source.effects.get(eff_id)
+                eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 reasons.append(f"• Effect '{eff_name}' REQUIRES a curse but curse slot {eff_idx + 1} is empty")
             else:
                 reasons.append("• An effect requires a curse but the corresponding curse slot is empty")
 
         if invalid_reason == InvalidReason.CURSE_NOT_IN_ROLLABLE_POOL:
             if invalid_idx >= 3:
-                curse = effects[invalid_idx]
-                curse_name = effects_json.get(str(curse), {}).get("name", f"Unknown ({curse})")
+                curse_id = effects[invalid_idx]
+                curse = data_source.effects.get(curse_id)
+                curse_name = curse.name if curse else f"Unknown ({curse_id})"
                 slot_num = invalid_idx - 2
                 reasons.append(f"• Curse '{curse_name}' is not valid for slot {slot_num}")
             else:
@@ -5897,8 +5906,8 @@ class ModifyRelicDialog:
             effect_id = int(self.effect_entries[index].get())
             if effect_id in [0, 4294967295, -1]:
                 self.effect_name_labels[index].config(text="None")
-            elif str(effect_id) in effects_json:
-                name = effects_json[str(effect_id)]["name"]
+            elif effect_id in data_source.effects:
+                name = data_source.effects[effect_id].name
                 self.effect_name_labels[index].config(text=name)
             else:
                 self.effect_name_labels[index].config(text="Unknown Effect")
