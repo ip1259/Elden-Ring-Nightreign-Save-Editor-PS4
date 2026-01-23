@@ -2164,29 +2164,20 @@ class SaveEditorGUI:
                 self.vessel_frames[vessel_slot].config(text=vessel_name)
 
                 vessel_info = loadout.get(vessel_slot, {})
-                has_relics = vessel_info.get('has_relics', False)
                 is_unlocked = is_vessel_unlocked(vessel_id, data_source)
 
                 # Update status label
                 if vessel_slot < len(self.vessel_status_labels):
                     unlock_flag = vessel_data_info.get('unlockFlag', 0)
-                    if is_unlocked:
-                        # Has relics = definitely unlocked
+                    if is_unlocked or vessel_slot == 0:
                         relic_count = sum(1 for _, r in vessel_info.get('relics', []) if r is not None)
                         self.vessel_status_labels[vessel_slot].config(
                             text=f"✅ Unlocked ({relic_count}/6 relics)",
                             foreground='green')
-                    elif vessel_slot == 0 or unlock_flag == 0:
-                        # Slot 0 is always unlocked (default vessel)
-                        # unlock_flag == 0 means no flag required (always unlocked)
-                        self.vessel_status_labels[vessel_slot].config(
-                            text="✅ Unlocked (Empty)",
-                            foreground='green')
                     else:
-                        # Empty non-zero slots - show unlock flag ID for reference
                         self.vessel_status_labels[vessel_slot].config(
-                            text=f"❓ Empty (Unlock Flag: {unlock_flag})",
-                            foreground='#888888')
+                            text=f"⚠️ Locked (Unlock Flag: {unlock_flag})",
+                            foreground='red')
 
             # Get relics for this vessel
             vessel_info = loadout.get(vessel_slot, {'relics': [], 'unlocked': False})
