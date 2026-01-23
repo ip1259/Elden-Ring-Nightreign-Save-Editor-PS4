@@ -63,7 +63,7 @@ class RelicChecker:
         """
         # Load relic effects pool data
         try:
-            pools = self.data_source.get_relic_pools_seq(relic_id)
+            pools = self.data_source.relics[relic_id].effect_slots
         except KeyError:
             return [((-1, -1, -1), [InvalidReason.VALIDATION_ERROR])]
         # There are 6 effects: 3 normal effects and 3 curse effects
@@ -246,7 +246,7 @@ class RelicChecker:
                 if effect_id in [-1, 0, 4294967295]:
                     continue
                 conflict_id = \
-                    self.data_source.get_effect_conflict_id(effect_id)
+                    self.data_source.effects[effect_id].conflict_id
                 # conflict id -1 is allowed to be duplicated
                 if conflict_id in conflict_ids and conflict_id != -1:
                     if return_1st_invalid_idx:
@@ -266,7 +266,7 @@ class RelicChecker:
                 if effect_id in [-1, 0, 4294967295]:
                     sort_ids.append(float('inf'))
                 else:
-                    sort_id = self.data_source.get_sort_id(effect_id)
+                    sort_id = self.data_source.effects[effect_id].sort_id
                     sort_ids.append(sort_id)
             sort_tuple = zip(sort_ids, effects[:3])
             sorted_effects = sorted(sort_tuple, key=lambda x: (x[0], x[1]))
@@ -298,7 +298,7 @@ class RelicChecker:
             return False
 
         try:
-            pools = self.data_source.get_relic_pools_seq(relic_id)
+            pools = self.data_source.relics[relic_id].effect_slots
         except KeyError:
             return False
 
@@ -351,7 +351,7 @@ class RelicChecker:
             return None
 
         try:
-            pools = self.data_source.get_relic_pools_seq(relic_id)
+            pools = self.data_source.relics[relic_id].effect_slots
         except KeyError:
             return "Unknown relic ID"
 
@@ -377,7 +377,7 @@ class RelicChecker:
                     if effect in self.data_source.get_pool_effects_strict(pool_id):
                         valid_pools.append(pool_names.get(pool_id, str(pool_id)))
 
-                effect_name = self.data_source.get_effect_name(effect)
+                effect_name = self.data_source.effects[effect].name
                 if valid_pools:
                     problematic_effects.append(
                         f"'{effect_name}' needs {'/'.join(valid_pools)} but slot {i+1} uses {pool_names.get(effect_pool, str(effect_pool))}"
@@ -407,7 +407,7 @@ class RelicChecker:
             if curse_id in [-1, 0, 4294967295]:
                 sort_id = float('inf')  # Empty curses go last
             else:
-                sort_id = self.data_source.get_sort_id(curse_id)
+                sort_id = self.data_source.effects[curse_id].sort_id
             curse_tuples.append((sort_id, curse_id))
         curse_tuples = sorted(curse_tuples, key=lambda x: (x[0], x[1]))
         curses = [pair[1] for pair in curse_tuples]
@@ -424,7 +424,7 @@ class RelicChecker:
             if effect_id in [-1, 0, 4294967295]:
                 sort_id = float('inf')  # Empty effects go last
             else:
-                sort_id = self.data_source.get_sort_id(effect_id)
+                sort_id = self.data_source.effects[effect_id].sort_id
 
             effect_curse_pairs.append((sort_id, effect_id, curse_id))
 
@@ -443,7 +443,7 @@ class RelicChecker:
         Used to detect if reordering alone could fix an illegal relic.
         """
         try:
-            pools = self.data_source.get_relic_pools_seq(relic_id)
+            pools = self.data_source.relics[relic_id].effect_slots
         except KeyError:
             return False
 
@@ -507,7 +507,7 @@ class RelicChecker:
         This checks rollable pool validity (effects must have non-zero weight).
         """
         try:
-            pools = self.data_source.get_relic_pools_seq(relic_id)
+            pools = self.data_source.relics[relic_id].effect_slots
         except KeyError:
             return None
 
@@ -572,7 +572,7 @@ class RelicChecker:
         This requires effects to have non-zero weight in the specific pool, not just combined.
         """
         try:
-            pools = self.data_source.get_relic_pools_seq(relic_id)
+            pools = self.data_source.relics[relic_id].effect_slots
         except KeyError:
             return None
 
@@ -640,7 +640,7 @@ class RelicChecker:
         the current effect while being strictly valid in the slot's pool.
         """
         try:
-            pools = self.data_source.get_relic_pools_seq(relic_id)
+            pools = self.data_source.relics[relic_id].effect_slots
         except KeyError:
             return []
 

@@ -4,7 +4,7 @@ from typing import Optional, Union
 import locale
 
 from globals import COLOR_MAP, LANGUAGE_MAP, CHARACTER_NAME_ID, CHARACTER_NAMES, RELIC_GROUPS
-from basic_class import AttachEffect
+from basic_class import AttachEffect, Relic, Vessel
 
 
 def get_system_language():
@@ -68,21 +68,21 @@ class SourceDataHandler:
     character_names = CHARACTER_NAMES
 
     def __init__(self, language: str = "en_US"):
-        self.effect_params = \
+        self._effect_params = \
             pd.read_csv(self.PARAM_DIR / "AttachEffectParam.csv")
-        self.effect_params: pd.DataFrame = self.effect_params[
+        self._effect_params: pd.DataFrame = self._effect_params[
             ["ID", "compatibilityId", "attachTextId", "overrideEffectId"]
         ]
-        self.effect_params.set_index("ID", inplace=True)
+        self._effect_params.set_index("ID", inplace=True)
 
         self.effect_table = \
             pd.read_csv(self.PARAM_DIR / "AttachEffectTableParam.csv")
         self.effect_table: pd.DataFrame = \
             self.effect_table[["ID", "attachEffectId", "chanceWeight", "chanceWeight_dlc"]]
 
-        self.relic_table = \
+        self._relic_table = \
             pd.read_csv(self.PARAM_DIR / "EquipParamAntique.csv")
-        self.relic_table: pd.DataFrame = self.relic_table[
+        self._relic_table: pd.DataFrame = self._relic_table[
             [
                 "ID",
                 "relicColor",
@@ -94,7 +94,7 @@ class SourceDataHandler:
                 "attachEffectTableId_curse3",
             ]
         ]
-        self.relic_table.set_index("ID", inplace=True)
+        self._relic_table.set_index("ID", inplace=True)
 
         self.antique_stand_param: pd.DataFrame = \
             pd.read_csv(self.PARAM_DIR / "AntiqueStandParam.csv")
@@ -106,8 +106,12 @@ class SourceDataHandler:
         self._scene_relic_ids: set = set()
         self.vessel_names: Optional[pd.DataFrame] = None
         self._load_text(language)
-        self.effects:dict[int, AttachEffect] = {}
+        self.effects: dict[int, AttachEffect] = {}
         self._set_effects()
+        self.relics: dict[int, Relic] = {}
+        self._set_relics()
+        self.vessels: dict[int, Vessel] = {}
+        self._set_vessels()
 
     def _load_text(self, language: str = "en_US"):
         support_languages = LANGUAGE_MAP.keys()
@@ -222,15 +226,30 @@ class SourceDataHandler:
 
     def _set_effects(self):
         # Empty effect first
-        self.effects[0xffffffff] = AttachEffect(self.effect_params,
+        self.effects[0xffffffff] = AttachEffect(self._effect_params,
                                                 self.effect_name,
                                                 0xffffffff)
         # Iterate through the entire effect param DataFrame
-        for index, row in self.effect_params.iterrows():
+        for index, row in self._effect_params.iterrows():
             effect_id = index
-            self.effects[effect_id] = AttachEffect(self.effect_params,
+            self.effects[effect_id] = AttachEffect(self._effect_params,
                                                    self.effect_name,
                                                    effect_id)
+
+    def _set_relics(self):
+        for index, row in self._relic_table.iterrows():
+            relic_id = index
+            self.relics[relic_id] = Relic(self._relic_table,
+                                          self.relic_name,
+                                          relic_id)
+
+    def _set_vessels(self):
+        for index, row in self.antique_stand_param.iterrows():
+            vessel_id = row["ID"]
+            self.vessels[vessel_id] = Vessel(self.antique_stand_param,
+                                             self.vessel_names,
+                                             vessel_id,
+                                             self.npc_name)
 
     def get_support_languages_name(self):
         return LANGUAGE_MAP.values()
@@ -248,12 +267,12 @@ class SourceDataHandler:
         _copy_df.set_index("id", inplace=True)
         _copy_df.rename(columns={"text": "name"}, inplace=True)
         _result = {}
-        for index, row in self.relic_table.iterrows():
+        for index, row in self._relic_table.iterrows():
             try:
                 _name_matches = \
                     _copy_df[_copy_df.index == index]["name"].values
                 _color_matches = \
-                    self.relic_table[self.relic_table.index == index][
+                    self._relic_table[self._relic_table.index == index][
                         "relicColor"].values
                 first_name_val = \
                     _name_matches[0] if len(_name_matches) > 0 else "Unset"
@@ -265,29 +284,6 @@ class SourceDataHandler:
             except KeyError:
                 _result[str(index)] = {"name": "Unset", "color": "Red"}
         return _result
-
-    def get_relic_datas(self):
-        if self.relic_name is None:
-            self._load_text()
-        _name_map = self.relic_name.copy()
-        _name_map.reset_index(inplace=True, drop=True)
-        _name_map.rename(columns={"text": "name"}, inplace=True)
-        _result = self.relic_table.copy()
-        _result.reset_index(inplace=True)
-        _result = pd.merge(
-            _result,
-            _name_map,
-            how="left",
-            left_on="ID",
-            right_on="id",
-        )
-        _result.drop(columns=["id"], inplace=True)
-        _result.set_index("ID", inplace=True)
-        return _result
-
-    def get_relic_color(self, relic_id: int):
-        color_id = self.relic_table.loc[relic_id, "relicColor"]
-        return COLOR_MAP[color_id]
 
     def cvrt_filtered_relic_origin_structure(self,
                                              relic_dataframe: pd.DataFrame):
@@ -315,35 +311,15 @@ class SourceDataHandler:
                 _result[str(index)] = {"name": "Unset", "color": "Red"}
         return _result
 
-    def get_effect_datas(self):
-        if self.effect_name is None:
-            self._load_text()
-        _name_map = self.effect_name.copy()
-        _name_map.reset_index(inplace=True, drop=True)
-        _name_map.rename(columns={"text": "name"}, inplace=True)
-        _result = self.effect_params.copy()
-        _result.reset_index(inplace=True)
-        _result = pd.merge(
-            _result,
-            _name_map,
-            how="left",
-            left_on="attachTextId",
-            right_on="id",
-        )
-        _result.drop(columns=["id"], inplace=True)
-        _result.set_index("ID", inplace=True)
-        _result.fillna({"name": "Unknown"}, inplace=True)
-        return _result
-
     def get_effect_origin_structure(self):
         if self.effect_name is None:
             self._load_text()
         _copy_df = self.effect_name.copy()
         _copy_df.set_index("id", inplace=True)
         _reslut = {"4294967295": {"name": "Empty"}}
-        for index, row in self.effect_params.iterrows():
+        for index, row in self._effect_params.iterrows():
             try:
-                _attachTextId = self.effect_params.loc[index, "attachTextId"]
+                _attachTextId = self._effect_params.loc[index, "attachTextId"]
                 matches = \
                     _copy_df[_copy_df.index == _attachTextId]["text"].values
                 first_val = matches[0] if len(matches) > 0 else "Unknown"
@@ -371,16 +347,6 @@ class SourceDataHandler:
         if len(_reslut) == 0:
             _reslut = {"4294967295": {"name": "Empty"}}
         return _reslut
-
-    def get_relic_pools_seq(self, relic_id: int):
-        _pool_ids = self.relic_table.loc[relic_id,
-                                         ["attachEffectTableId_1",
-                                          "attachEffectTableId_2",
-                                          "attachEffectTableId_3",
-                                          "attachEffectTableId_curse1",
-                                          "attachEffectTableId_curse2",
-                                          "attachEffectTableId_curse3"]]
-        return _pool_ids.values.tolist()
 
     def is_scene_relic(self, relic_id: int) -> bool:
         """Check if a relic is a Scene relic (added in patch 1.03).
@@ -415,40 +381,6 @@ class SourceDataHandler:
                 "Has effect pools from base game release",
                 "#666666"  # Gray for original relics
             )
-
-    def get_effect_conflict_id(self, effect_id: int):
-        try:
-            if effect_id == -1 or effect_id == 4294967295:
-                return -1
-            _conflict_id = self.effect_params.loc[effect_id, "compatibilityId"]
-            return _conflict_id
-        except KeyError:
-            return -1
-
-    def get_sort_id(self, effect_id: int):
-        try:
-            _sort_id = self.effect_params.loc[effect_id, "overrideEffectId"]
-            return _sort_id
-        except KeyError:
-            pass
-        return -1
-
-    def get_effect_name(self, effect_id: int) -> str:
-        """Get the name of an effect by its ID."""
-        if effect_id in [-1, 0, 4294967295]:
-            return "Empty"
-        if self.effect_name is None:
-            self._load_text()
-        try:
-            text_id = self.effect_params[self.effect_params.index == effect_id][
-                ["attachTextId"]
-            ].values[0]
-            row = self.effect_name[self.effect_name["id"] == text_id]
-            if not row.empty:
-                return row["text"].values[0]
-        except Exception:
-            pass
-        return f"Effect {effect_id}"
 
     def get_pool_effects(self, pool_id: int):
         if pool_id == -1:
@@ -569,7 +501,7 @@ class SourceDataHandler:
         If it doesn't, assign -1.
         """
         effs = effects[:3]
-        pool_ids = self.get_relic_pools_seq(relic_id)
+        pool_ids = self.relics[relic_id].effect_slots
         curse_pools = pool_ids[3:]
         new_pool_ids = pool_ids[:3]
         for i in range(3):
@@ -580,7 +512,7 @@ class SourceDataHandler:
         return new_pool_ids
 
     def get_relic_slot_count(self, relic_id: int) -> tuple[int, int]:
-        pool_seq: list = self.get_relic_pools_seq(relic_id)
+        pool_seq: list = self.relics[relic_id].effect_slots
         effect_slot = pool_seq[:3]
         curse_slot = pool_seq[3:]
         return 3-effect_slot.count(-1), 3-curse_slot.count(-1)
@@ -588,47 +520,11 @@ class SourceDataHandler:
     def get_character_name(self, character_id: int):
         return self.npc_name[self.npc_name["id"] == character_id]["text"].values[0]
 
-    def get_vessel_data(self, vessel_id: int):
-        """
-        Get vessel data by vessel ID.
-        
-        :param vessel_id: vessel ID to get data for
-        :type vessel_id: int
-        :return: Vessel data as a dictionary
-        :rtype: dict
-            keys: Name, Character, Colors, unlockFlag, hero_type
-        """
-        if self.antique_stand_param is None:
-            return None
-        _vessel_data = self.antique_stand_param[self.antique_stand_param["ID"] == vessel_id][
-            ["goodsId", "heroType",
-             "relicSlot1", "relicSlot2", "relicSlot3",
-             "deepRelicSlot1", "deepRelicSlot2", "deepRelicSlot3",
-             "unlockFlag"]
-        ]
-        # hero type start at 1, and 11 means ALL
-        _hero_type = int(_vessel_data["heroType"].values[0])
-        _unlock_flag = int(_vessel_data["unlockFlag"].values[0])
-        _result = {"Name": self.vessel_names[self.vessel_names["id"] == _vessel_data["goodsId"].values[0]]["text"].values[0],
-                   "Character": self.get_character_name(CHARACTER_NAME_ID[_hero_type-1]) if _hero_type != 11 else "All",
-                   "Colors": (
-                        COLOR_MAP[_vessel_data["relicSlot1"].values[0]],
-                        COLOR_MAP[_vessel_data["relicSlot2"].values[0]],
-                        COLOR_MAP[_vessel_data["relicSlot3"].values[0]],
-                        COLOR_MAP[_vessel_data["deepRelicSlot1"].values[0]],
-                        COLOR_MAP[_vessel_data["deepRelicSlot2"].values[0]],
-                        COLOR_MAP[_vessel_data["deepRelicSlot3"].values[0]]
-                        ),
-                   "unlockFlag": _unlock_flag,
-                   "hero_type": _hero_type
-                   }
-        return _result
-
     def get_filtered_relics_df(self, color: Union[int, str] = None,
                                deep: Optional[bool] = None,
                                effect_slot: Optional[int] = None,
                                curse_slot: Optional[int] = None):
-        result_df: pd.DataFrame = self.relic_table.copy()
+        result_df: pd.DataFrame = self._relic_table.copy()
         result_df.reset_index(inplace=True)
         safe_range = self.get_safe_relic_ids()
         result_df = result_df[result_df["ID"].isin(safe_range)]
@@ -675,7 +571,7 @@ class SourceDataHandler:
 
 if __name__ == "__main__":
     source_data_handler = SourceDataHandler()
-    t = source_data_handler.effects[7040000]
+    t = source_data_handler.vessels[4003]
     print(repr(t))
     source_data_handler.reload_text("zh_TW")
     print(repr(t))

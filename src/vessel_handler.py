@@ -129,8 +129,8 @@ class VesselParser:
             cursor += 4
             relics = list(struct.unpack_from("<6I", globals.data, cursor))
 
-            v_meta = self.game_data.get_vessel_data(v_id)
-            target_hero = v_meta.get("hero_type") if v_meta else None
+            v_meta = self.game_data.vessels.get(v_id)
+            target_hero = v_meta.hero_type if v_meta else None
             assigned_id = last_hero_type if target_hero == 11 else target_hero
 
             for r in relics:
@@ -334,11 +334,11 @@ class Validator:
 
     def check_vessel_assignment(self, heroes: dict[int, HeroLoadout], hero_type: int, vessel_id: int):
         if self.check_hero(heroes, hero_type):
-            _vessel_info = self.game_data.get_vessel_data(vessel_id)
+            _vessel_info = self.game_data.vessels.get(vessel_id)
             if not _vessel_info:
                 raise ImportError("Can't find vessel data.")
 
-            if _vessel_info["hero_type"] != 11 and _vessel_info["hero_type"] != hero_type:
+            if _vessel_info.hero_type != 11 and _vessel_info.hero_type != hero_type:
                 raise ValueError("This vessel is not assigned to this hero")
             else:
                 if vessel_id not in [v["vessel_id"] for v in heroes[hero_type].vessels]:
@@ -350,7 +350,7 @@ class Validator:
     def validate_vessel(self, heroes: dict[int, HeroLoadout], hero_type: int, vessel:dict):
         # Check is vessel assigned to correct hero
         if self.check_vessel_assignment(heroes, hero_type, vessel["vessel_id"]):
-            _vessel_info = self.game_data.get_vessel_data(vessel["vessel_id"])
+            _vessel_info = self.game_data.vessels[vessel["vessel_id"]]
             # Check whether the relic in each relic slot is valid.
             for relic_index, relic in enumerate(vessel["relics"]):
                 if relic == 0:
@@ -372,8 +372,8 @@ class Validator:
                         # relic type mismatch
                         raise ValueError(f"Found normal slot with deep relic. Slot:{relic_index+1}")
                     # Check color match
-                    slot_color = _vessel_info['Colors'][relic_index]
-                    new_relic_color = self.game_data.get_relic_color(real_id)
+                    slot_color = COLOR_MAP[_vessel_info.relic_slots[relic_index]]
+                    new_relic_color = self.game_data.relics[real_id].color
                     # new_relic_color = self.game_data.get_relic_origin_structure()[str(real_id)]["color"]
                     if slot_color != new_relic_color and slot_color != COLOR_MAP[4]:
                         # Color mismatch
