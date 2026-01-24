@@ -603,7 +603,7 @@ class RelicChecker:
 
                 # Check effect is valid in the pool (any pool, not just deep)
                 pool_effects = self.data_source.get_pool_effects_strict(effect_pool)
-                if effect not in pool_effects:
+                if effect not in pool_effects and (pool_effects or effect_pool not in [-1, 0, 4294967295]):
                     sequence_strict_valid = False
                     break
 
