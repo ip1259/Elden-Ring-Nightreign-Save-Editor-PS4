@@ -20,6 +20,9 @@ class InventoryHandler:
         self.entry_offset = 0
         self.entry_count = 0
         self.vessels = [9600, 9603, 9606, 9609, 9612, 9615, 9618, 9621, 9900, 9910]  # Hero Default
+        self._cur_last_instance_id = 0x800054  # start instance id
+        self._cur_last_acquisition_id = 0
+        self._cur_last_state_index = 0
 
     @classmethod
     def get_player_name_from_data(cls, data):
@@ -40,16 +43,15 @@ class InventoryHandler:
 
     def parse(self):
         logger.info("Parsing inventory data")
-        self.states = []
-        self.entries = []
-        self.vessels = [9600, 9603, 9606, 9609, 9612, 9615, 9618, 9621, 9900, 9910]  # Hero Default
-        self.entry_count = 0
+        self.__init__()
         cur_offset = self.START_OFFEST
         logger.info("Parsing inventory states. Starting at offset: 0x%X", cur_offset)
         for i in range(self.STATE_SLOT_COUNT):
             state = ItemState()
             state.from_bytes(globals.data, cur_offset)
             self.states.append(state)
+            self._cur_last_instance_id = max(self._cur_last_instance_id, state.instance_id)
+            self._cur_last_state_index = i if state.ga_handle != 0 else self._cur_last_state_index
             cur_offset += state.size
 
         cur_offset += 0x94
@@ -69,6 +71,8 @@ class InventoryHandler:
             cur_offset += 14
             if entry.ga_handle != 0:
                 self.entry_count += 1
+            self._cur_last_acquisition_id = max(self._cur_last_acquisition_id, entry.acquisition_id)
+
         count_in_data = struct.unpack_from("<I", globals.data, self.entry_offset)[0]
         if self.entry_count != count_in_data:
             logger.warning("Entry count mismatch: counted %d, data has %d", self.entry_count, count_in_data)
@@ -85,3 +89,6 @@ class InventoryHandler:
         logger.debug(f"Entry Offset: {self.entry_offset}")
         logger.debug(f"Entry Count: {self.entry_count}")
         logger.debug(f"Vessels: {self.vessels}")
+        logger.debug(f"Last Instance ID: {self._cur_last_instance_id}")
+        logger.debug(f"Last Acquisition ID: {self._cur_last_acquisition_id}")
+        logger.debug(f"Last State Index: {self._cur_last_state_index}")
