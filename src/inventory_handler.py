@@ -7,6 +7,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def remove_padding_area():
+    # Remove 72 bytes from the padding area at the end of the file.
+    # The save file must maintain a constant size for the game to load it.
+    globals.data = globals.data[: -0x1C - 72] + globals.data[-0x1C:]
+
+
+def insert_padding_area():
+    # Insert 72 bytes of padding at the end of the file.
+    # The save file must maintain a constant size for the game to load it.
+    globals.data = globals.data[: -0x1C] + b'\x00' * 72 + globals.data[-0x1C:]
+
+
 class InventoryHandler:
     START_OFFEST = 0x14
     STATE_SLOT_COUNT = 5120
@@ -17,6 +29,7 @@ class InventoryHandler:
         self.states: list[ItemState] = []
         self.entries: list[ItemEntry] = []
         self.player_name_offset = 0
+        self.entry_count_offset = 0
         self.entry_offset = 0
         self.entry_count = 0
         self.vessels = [9600, 9603, 9606, 9609, 9612, 9615, 9618, 9621, 9900, 9910]  # Hero Default
@@ -41,6 +54,14 @@ class InventoryHandler:
         name = raw_name.decode("utf-16-le", errors="ignore").rstrip("\x00")
         return name if name else None
 
+    def aquire_new_instance_id(self):
+        self._cur_last_instance_id += 1
+        return self._cur_last_instance_id
+
+    def aquire_new_acquisition_id(self):
+        self._cur_last_acquisition_id += 1
+        return self._cur_last_acquisition_id
+
     def parse(self):
         logger.info("Parsing inventory data")
         self.__init__()
@@ -58,9 +79,11 @@ class InventoryHandler:
         self.player_name_offset = cur_offset
         logger.info("Assuming player name offset at: 0x%X", cur_offset)
         cur_offset += 0x5B8
+        self.entry_count_offset = cur_offset
+        logger.info("Assuming entry count offset at: 0x%X", cur_offset)
+        cur_offset += 0x4
         self.entry_offset = cur_offset
         logger.info("Assuming entry offset at: 0x%X", cur_offset)
-        cur_offset += 0x4
 
         logger.info("Parsing inventory entries. Starting at offset: 0x%X", cur_offset)
         for i in range(self.ENTRY_SLOT_COUNT):
@@ -73,20 +96,115 @@ class InventoryHandler:
                 self.entry_count += 1
             self._cur_last_acquisition_id = max(self._cur_last_acquisition_id, entry.acquisition_id)
 
-        count_in_data = struct.unpack_from("<I", globals.data, self.entry_offset)[0]
+        count_in_data = struct.unpack_from("<I", globals.data, self.entry_count_offset)[0]
         if self.entry_count != count_in_data:
             logger.warning("Entry count mismatch: counted %d, data has %d", self.entry_count, count_in_data)
             logger.warning("Trying to fix it...")
             logger.info("Updating entry count in")
-            struct.pack_into("<I", globals.data, self.entry_offset, self.entry_count)
+            struct.pack_into("<I", globals.data, self.entry_count_offset, self.entry_count)
 
-    def debug_print(self):
+    def add_relic_to_inventory(self):
+        logger.info("Adding relic to inventory")
+        # Create dummy relic state first
+        dummy_relic = ItemState.create_dummy_relic(self.aquire_new_instance_id())
+        # Replace Item Entry at empty slot
+        empty_entry_index = -1
+        for i in range(self.ENTRY_SLOT_COUNT):
+            entry = self.entries[i]
+            if entry.ga_handle == 0:
+                # Found an empty slot
+                empty_entry_index = i
+                break
+        else:
+            raise RuntimeError("No empty slot found in inventory entries to add relic.")
+
+        # Replace Item State after current last item state
+        empty_state_index = -1
+        for i in range(self._cur_last_state_index, self.STATE_SLOT_COUNT):
+            if self.states[i].ga_handle == 0:
+                empty_state_index = i
+                break
+        else:
+            raise RuntimeError("No empty slot found in inventory states to add relic.")
+
+        # Replace Item Entry
+        self.entries[empty_entry_index] = ItemEntry.create_from_state(dummy_relic, self.aquire_new_acquisition_id())
+        _new_enty_data = self.entries[empty_entry_index].data_bytes
+        # Replace entry data
+        target_offset = self.entry_offset + empty_entry_index * 14
+        logger.info("Adding relic at offset: 0x%X", target_offset)
+        globals.data = globals.data[:self.entry_offset+empty_entry_index*14] + _new_enty_data + globals.data[self.entry_offset+(empty_entry_index+1)*14:]
+        # Update entry count
+        self.entry_count += 1
+        struct.pack_into("<I", globals.data, self.entry_count_offset, self.entry_count)
+        logger.info("Added relic at entry index %d", empty_entry_index)
+
+        # Replace Item State data
+        old_size = self.states[empty_state_index].size
+        self.states[empty_state_index] = dummy_relic
+        _new_state_data = self.states[empty_state_index].data
+        _cur_offset = self.START_OFFEST + sum(state.size for state in self.states[:empty_state_index])
+        globals.data = globals.data[:_cur_offset] + _new_state_data + globals.data[_cur_offset + old_size:]
+        remove_padding_area()
+        logger.info("Added relic at state index %d", empty_state_index)
+        self._cur_last_state_index = empty_state_index
+        self.parse()  # Just make sure everything is fine
+        return True, self.entries[empty_entry_index].ga_handle
+
+    def remove_relic_from_inventory(self, ga_handel):
+        logger.info("Removing relic from inventory")
+        target_state_index = -1
+        for i in range(self.STATE_SLOT_COUNT):
+            if self.states[i].ga_handle == ga_handel:
+                target_state_index = i
+                logger.info("Found relic at state index %d", target_state_index)
+                break
+        else:
+            raise ValueError("Relic not found in inventory")
+        target_entry_index = -1
+        for i in range(self.ENTRY_SLOT_COUNT):
+            if self.entries[i].ga_handle == ga_handel:
+                target_entry_index = i
+                logger.info("Found relic at entry index %d", target_entry_index)
+                break
+        else:
+            raise ValueError("Relic not found in inventory")
+
+        # Replace target entry by 0
+        logger.info("Removing relic at entry index %d", target_entry_index)
+        self.entries[target_entry_index] = ItemEntry(bytearray(14))
+        _new_enty_data = self.entries[target_entry_index].data_bytes
+        globals.data = globals.data[:self.entry_offset+target_entry_index*14] + _new_enty_data + globals.data[self.entry_offset+(target_entry_index+1)*14:]
+        # Update entry count
+        logger.info(f"Updating entry count in inventory from {self.entry_count} to {self.entry_count - 1}")
+        self.entry_count -= 1
+        struct.pack_into("<I", globals.data, self.entry_count_offset, self.entry_count)
+        logger.info("Removed relic at entry index %d")
+
+        # Replace target state by 0
+        logger.info("Removing relic at state index %d", target_state_index)
+        old_size = self.states[target_state_index].size
+        self.states[target_state_index] = ItemState()
+        _new_state_data = self.states[target_state_index].data
+        _cur_offset = self.START_OFFEST + sum(state.size for state in self.states[:target_state_index])
+        globals.data = globals.data[:_cur_offset] + _new_state_data + globals.data[_cur_offset + old_size:]
+        logger.info("Fill padding area with 0x00")
+        insert_padding_area()
+        logger.info("Removed relic at state index %d", target_state_index)
+        self._cur_last_state_index = target_state_index-1
+        self.parse()  # Just make sure everything is fine
+
+    def debug_print(self, non_zero_only=False):
         for i, state in enumerate(self.states):
+            if state.ga_handle == 0 and non_zero_only:
+                continue
             logger.debug(f"State {i}: {state}")
         for i, entry in enumerate(self.entries):
+            if entry.ga_handle == 0 and non_zero_only:
+                continue
             logger.debug(f"Entry {i}: {entry}")
         logger.debug(f"Player Name Offset: {self.player_name_offset}")
-        logger.debug(f"Entry Offset: {self.entry_offset}")
+        logger.debug(f"Entry Offset: {self.entry_count_offset}")
         logger.debug(f"Entry Count: {self.entry_count}")
         logger.debug(f"Vessels: {self.vessels}")
         logger.debug(f"Last Instance ID: {self._cur_last_instance_id}")
