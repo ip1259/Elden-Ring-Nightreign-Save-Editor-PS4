@@ -3935,7 +3935,7 @@ class SaveEditorGUI:
         controls_frame.pack(fill='x', padx=10, pady=5)
         
         ttk.Button(controls_frame, text="➕ Add Relic", style='Add.TButton',
-                  command=self.add_relic_tk)  # .pack(side="left", padx=5)
+                  command=self.add_relic_tk).pack(side="left", padx=5)
         ttk.Button(controls_frame, text="🔄 Refresh Inventory", command=self.reload_inventory).pack(side='left', padx=5)
         ttk.Button(controls_frame, text="📤 Export to Excel", command=self.export_relics).pack(side='left', padx=5)
         ttk.Button(controls_frame, text="📥 Import from Excel", command=self.import_relics).pack(side='left', padx=5)
@@ -4264,7 +4264,7 @@ class SaveEditorGUI:
         self.load_character(path)
 
     def load_character(self, path):
-        global userdata_path, steam_id, data_source, ga_relic, relic_checker, loadout_handler
+        global userdata_path, steam_id, data_source, ga_relic, relic_checker, loadout_handler, inventory_handler
         userdata_path = path
 
         try:
@@ -5098,25 +5098,29 @@ class SaveEditorGUI:
         self.refresh_inventory_lightly()
 
     def add_relic_tk(self):
+        global inventory_handler
         if globals.data is None:
             messagebox.showwarning(
                 "Warning", "No save file loaded. Please open a save file first."
             )
             return
-        added_result, new_ga = add_relic()
-        if added_result:
-            messagebox.showinfo("Success", "Dummy relic added. Refreshing inventory.")
-            self.refresh_inventory_and_vessels()
-            # Find Added item by new_ga
-            for item in self.tree.get_children():
-                item_ga = int(self.tree.item(item, 'tags')[0])
-                if item_ga == new_ga:
-                    self.tree.selection_set(item)
-                    self.tree.focus(item)
-                    self.tree.see(item)
-                    break
-            self.modify_selected_relic()
-        else:
+        try:
+            inventory_handler.debug_print(non_zero_only=True)
+            added_result, new_ga = inventory_handler.add_relic_to_inventory()
+            inventory_handler.debug_print(non_zero_only=True)
+            if added_result:
+                messagebox.showinfo("Success", "Dummy relic added. Refreshing inventory.")
+                self.refresh_inventory_and_vessels()
+                # Find Added item by new_ga
+                for item in self.tree.get_children():
+                    item_ga = int(self.tree.item(item, 'tags')[0])
+                    if item_ga == new_ga:
+                        self.tree.selection_set(item)
+                        self.tree.focus(item)
+                        self.tree.see(item)
+                        break
+                self.modify_selected_relic()
+        except Exception as e:
             messagebox.showerror("Error", f"Failed to add relic: {e}")
 
     def _find_valid_relic_id_for_effects(self, current_id, effects):
@@ -5927,7 +5931,6 @@ class ModifyRelicDialog:
                     entry.insert(0, str(sorted_effects[i]))
                     self.on_effect_change(i)  # Update name labels
 
-                self.update_debug_info()
                 messagebox.showinfo("Auto Sort", "Effects sorted successfully!\nCurses remain paired with their corresponding effects.")
             else:
                 messagebox.showerror("Error", "Relic checker not initialized")
@@ -5955,6 +5958,8 @@ class ModifyRelicDialog:
 
         # Update curse indicators when effect or curse slots change
         self._update_curse_indicators()
+        
+        self.update_debug_info()
 
     def _update_curse_indicators(self):
         """Update curse slot labels to show which ones NEED to be filled"""
@@ -6443,6 +6448,9 @@ class ModifyRelicDialog:
                 # Slot is disabled and no alternatives available
                 slot_type = "effect" if effect_index < 3 else "curse"
                 slot_num = (effect_index % 3) + 1
+                self.effect_entries[effect_index].delete(0, tk.END)
+                self.effect_entries[effect_index].insert(0, str(0xffffffff))
+                self.on_effect_change(effect_index)
                 messagebox.showinfo(
                     "Slot Disabled",
                     f"This relic has no {slot_type} slots available.\n"
