@@ -7,10 +7,7 @@ import time
 WORKING_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 # In other modules, use globals.data instead of the data variable to avoid naming conflicts.
 data = None
-# To check if the player has vessels
-ga_goods = []  # list[tuple(ga_handle, goodsId)]
-ga_relics_list = []  # list[ga_handle]
-goods_id_list = []  # list[goodsID]
+
 
 # Items type
 ITEM_TYPE_EMPTY = 0x00000000
