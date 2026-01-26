@@ -50,9 +50,13 @@ class InventoryHandler:
         self.states: list[ItemState] = []
         self.entries: list[ItemEntry] = []
         self.relics: dict[int, ItemEntry] = {}
+
         self.player_name_offset = 0
         self.entry_count_offset = 0
         self.entry_offset = 0
+        self.murks_offset = 0
+        self.sigs_offset = 0
+
         self.entry_count = 0
         self.vessels = [9600, 9603, 9606, 9609, 9612, 9615, 9618, 9621, 9900, 9910]  # Hero Default
         self.ga_to_acquisition_id = {}
@@ -180,6 +184,8 @@ class InventoryHandler:
 
             cur_offset += 0x94
             self.player_name_offset = cur_offset
+            self.murks_offset = cur_offset + 52
+            self.sigs_offset = cur_offset - 64
             logger.info("Assuming player name offset at: 0x%X", cur_offset)
             cur_offset += 0x5B8
             self.entry_count_offset = cur_offset
@@ -348,6 +354,22 @@ class InventoryHandler:
                 raise ValueError("Relic not found in inventory")
             self.update_relic_state(target_state_index)
             return True
+
+    @property
+    def murks(self):
+        return int(struct.unpack_from("<I", globals.data, self.murks_offset)[0])
+
+    @murks.setter
+    def murks(self, value):
+        struct.pack_into("<I", globals.data, self.murks_offset, value)
+
+    @property
+    def sigs(self):
+        return int(struct.unpack_from("<I", globals.data, self.sigs_offset)[0])
+
+    @sigs.setter
+    def sigs(self, value):
+        struct.pack_into("<I", globals.data, self.sigs_offset, value)
 
     def debug_print(self, non_zero_only=False):
         for i, state in enumerate(self.states):
