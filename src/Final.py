@@ -1,3 +1,18 @@
+"""
+Refactor Summary:
+1. Architecture: Migrated SourceDataHandler, InventoryHandler, and LoadoutHandler to Singleton 
+   pattern to ensure centralized data management.
+2. Responsibility: Decoupled relic validation from storage logic; GA storage is now managed 
+   exclusively by InventoryHandler.
+3. Data Handling: Enhanced Murks and Sigs access. They are now exposed as class members, 
+   where setters perform direct modification of the underlying binary data.
+4. Localization: Automated language code detection to replace hardcoded defaults.
+
+Future Plans & Compatibility:
+- Plan to replace legacy 'gaprint' calls with modernized InventoryHandler methods.
+- Maintain existing 'ga_relic' data structures while transitioning parsing logic 
+  to InventoryHandler methods.
+"""
 from main_file import decrypt_ds2_sl2, encrypt_modified_files
 from main_file_import import decrypt_ds2_sl2_import
 import json, shutil, os , struct
@@ -38,22 +53,7 @@ logger = logging.getLogger(__name__)
 # Global variables
 os.chdir(WORKING_DIR)
 
-# Data storage - SourceDataHandler and LoadoutHandler are lazy-initialized to speed up startup
-data_source: Optional[SourceDataHandler] = None
-relic_checker: Optional[RelicChecker] = None
-loadout_handler: Optional[LoadoutHandler] = None
-inventory_handler: Optional[InventoryHandler] = None
-items_json = {}
-effects_json = {}
 userdata_path = None
-
-
-def _ensure_data_source():
-    """Lazy initialize data_source on first use"""
-    global data_source, loadout_handler
-    if data_source is None:
-        logger.info("Initializing SourceDataHandler")
-        data_source = SourceDataHandler(language=get_system_language())
 
 
 # Config file path for remembering last opened file
@@ -142,13 +142,13 @@ def get_vessel_info(char_name, vessel_slot):
     Returns:
         Dictionary with 'name' and optionally 'colors' (6 colors for normal/deep slots)
     """
-    global data_source
+    game_data = SourceDataHandler()
 
     # Calculate vessel ID from character and slot
     # Characters 0-9 have vessels at IDs 1000-1006, 2000-2006, etc.
     # Shared vessels (slots 7-9) use IDs 19000-19002
     # Shared vessel slot 10 uses ID 19010
-    char_id = data_source.character_names.index(char_name) if char_name in data_source.character_names else -1
+    char_id = game_data.character_names.index(char_name) if char_name in game_data.character_names else -1
 
     if char_id < 0 or char_id >= 10:
         return {'name': f"Vessel {vessel_slot}"}
@@ -165,9 +165,9 @@ def get_vessel_info(char_name, vessel_slot):
         vessel_id = 19010
 
     # Try to get vessel data from source_data_handler
-    if data_source is not None:
+    if game_data is not None:
         try:
-            vessel_data_info = data_source.vessels.get(vessel_id, None)
+            vessel_data_info = game_data.vessels.get(vessel_id, None)
             if vessel_data_info:
                 return {
                     'name': vessel_data_info.name,
@@ -181,30 +181,9 @@ def get_vessel_info(char_name, vessel_slot):
     return {'name': f"Vessel {vessel_slot}", 'unlockFlag': 0}
 
 
-def load_json_data():
-    global items_json, effects_json
-    _ensure_data_source()  # Lazy init data_source
-    try:
-        items_json = {}
-        effects_json = {}
-
-        return True
-
-    except FileNotFoundError as e:
-        messagebox.showerror(
-            "Error",
-            f"JSON files not found: {str(e)}\nManual editing only available."
-        )
-        return False
-
-
 def reload_language(language_code):
-    global items_json, effects_json, data_source
-    _ensure_data_source()  # Lazy init data_source
-    result = data_source.reload_text(language_code)
-    # items_json = data_source.get_relic_origin_structure()
-    items_json = {}
-    effects_json = {}
+    game_data = SourceDataHandler()
+    result = game_data.reload_text(language_code)
     return result
 
 
@@ -221,6 +200,7 @@ def parse_items(data_type, start_offset, slot_count=5120):
 
 # Global to store acquisition order mapping (GA handle -> acquisition ID from inventory entry)
 ga_acquisition_order = {}
+
 
 def parse_inventory_acquisition_order(data_type, items_end_offset):
     """
@@ -259,45 +239,6 @@ def parse_inventory_acquisition_order(data_type, items_end_offset):
     return ga_acquisition_order
 
 
-def parse_inventory_section(data_type, name_offset):
-    globals.ga_goods = []
-    globals.goods_id_list = []
-    globals.ga_relics_list = []
-    start_offset = name_offset + 0x5B8  # same section with parse acq order function
-    base_size = 12 + 2  # 2 bytes unknown(maybe some kind of flag, sellable or favorite)
-    # First 4 bytes: Item last index
-    # Followed by Item structures (Base size 14 bytes):
-    # - 4 bytes: ga_handle, Composite LE (Byte 0: Type 0xB0=Goods, Bytes 1-3: ID)
-    # - 4 bytes: item_quantity
-    # - 4 bytes: acquisition ID
-    # - 1 byte: bool -> is favorite
-    # - 1 byte: bool -> is sellable
-    counts = struct.unpack_from("<I", data_type, start_offset)[0]
-    MAX_INVENTORY_COUNT = 3065
-    cursor = start_offset + 4
-    i = 0
-    for _ in range(MAX_INVENTORY_COUNT):
-        if cursor >= len(data_type) or i >= counts:
-            break
-        ga_handle = struct.unpack_from("<I", data_type, cursor)[0]
-        if ga_handle == 0:
-            cursor += base_size
-            continue
-        
-        item_amount = struct.unpack_from("<I", data_type, cursor + 4)[0]
-        acquisition = struct.unpack_from("<I", data_type, cursor + 8)[0]
-        is_favorite, is_sellable = struct.unpack_from("<BB", data_type, cursor + 12)
-        type_bits = ga_handle & 0xFF000000
-        if type_bits == ITEM_TYPE_GOODS:
-            goods_id = ga_handle & 0x00FFFFFF
-            globals.ga_goods.append((ga_handle, goods_id))
-            globals.goods_id_list.append(goods_id)
-        elif type_bits == ITEM_TYPE_RELIC:
-            globals.ga_relics_list.append(ga_handle)
-        cursor += base_size
-        i += 1
-
-
 def gaprint(data_type):
     global ga_relic, ga_items
     ga_items = []
@@ -328,331 +269,8 @@ def gaprint(data_type):
     # Parse inventory section to get acquisition order
     parse_inventory_acquisition_order(data_type, end_offset)
     
-    # Parse goods for check if player had vessel unlocked
-    parse_inventory_section(data_type, end_offset+0x94)  # end_offset+0x94 = name_offset
     # debug_ga_relic_check()
     return end_offset
-
-
-def read_char_name(data):
-    name_offset = gaprint(data) + 0x94
-    max_chars = 16
-    for cur in range(name_offset, name_offset + max_chars * 2, 2):
-        if data[cur:cur + 2] == b'\x00\x00':
-            max_chars = (cur - name_offset) // 2
-            break
-    raw_name = data[name_offset:name_offset + max_chars * 2]
-    name = raw_name.decode("utf-16-le", errors="ignore").rstrip("\x00")
-    return name if name else None
-
-
-def debug_dump_complete_relic_analysis(file_data):
-    """Complete deep dive analysis of relics in save file and data files."""
-
-    output_lines = []
-    def log(msg=""):
-        output_lines.append(msg)
-        print(msg)
-
-    log("\n" + "="*100)
-    log("COMPLETE RELIC DEEP DIVE ANALYSIS")
-    log("="*100)
-
-    # =========================================================================
-    # PART 1: SAVE FILE ANALYSIS
-    # =========================================================================
-    log(f"\n{'='*50}")
-    log("PART 1: SAVE FILE STRUCTURE")
-    log(f"{'='*50}")
-    log(f"File size: {len(file_data)} bytes (0x{len(file_data):X})")
-
-    # Find all relic GA handles in the file
-    relic_handles = []
-    for offset in range(0, len(file_data) - 4, 4):
-        val = struct.unpack_from('<I', file_data, offset)[0]
-        if (val & 0xF0000000) == ITEM_TYPE_RELIC and val != 0:
-            relic_handles.append((offset, val))
-
-    log(f"\nTotal relic GA handles found: {len(relic_handles)}")
-
-    # Analyze the relic item data structure (from gaprint parsing)
-    log(f"\n--- Relic Item Data (from ga_relic) ---")
-    log(f"Total relics parsed: {len(ga_relic)}")
-    if ga_relic:
-        log("\nRelic structure: (ga_handle, item_id, effect1, effect2, effect3, curse1, curse2, curse3, offset, size)")
-        log("\nFirst 10 relics with full data:")
-        for i, relic in enumerate(ga_relic[:10]):
-            ga_handle, item_id, eff1, eff2, eff3, curse1, curse2, curse3, offset, size = relic
-            real_id = item_id - 2147483648
-            item_info = items_json.get(str(real_id), {})
-            name = item_info.get('name', 'Unknown')
-            color = item_info.get('color', 'Unknown')
-            log(f"\n  Relic {i+1}:")
-            log(f"    GA Handle: 0x{ga_handle:08X}")
-            log(f"    Item ID: {item_id} (real: {real_id})")
-            log(f"    Name: {name}")
-            log(f"    Color: {color}")
-            log(f"    Effects: {eff1}, {eff2}, {eff3}")
-            log(f"    Curses: {curse1}, {curse2}, {curse3}")
-            log(f"    Offset: 0x{offset:06X}, Size: {size} bytes")
-
-            # Show raw bytes around this relic
-            if offset > 0 and offset + size < len(file_data):
-                log(f"    Raw data at offset (first 80 bytes):")
-                for j in range(0, min(80, size), 16):
-                    hex_str = ' '.join(f'{file_data[offset+j+k]:02X}' for k in range(min(16, size-j)))
-                    log(f"      0x{offset+j:06X}: {hex_str}")
-
-    # =========================================================================
-    # PART 2: ANALYZE RELIC STRUCTURE IN DETAIL
-    # =========================================================================
-    log(f"\n{'='*50}")
-    log("PART 2: DETAILED RELIC BYTE STRUCTURE")
-    log(f"{'='*50}")
-
-    if ga_relic:
-        # Pick one relic and show complete structure
-        sample_relic = ga_relic[0]
-        ga_handle, item_id, eff1, eff2, eff3, curse1, curse2, curse3, offset, size = sample_relic
-
-        log(f"\nSample relic at offset 0x{offset:06X} (size {size} bytes):")
-        log(f"Interpreting structure field by field:")
-
-        cursor = offset
-        fields = [
-            ("GA Handle", 4),
-            ("Item ID", 4),
-            ("Durability?", 4),
-            ("Unknown 1", 4),
-            ("Effect 1", 4),
-            ("Effect 2", 4),
-            ("Effect 3", 4),
-        ]
-
-        # Read and display each potential field
-        for field_name, field_size in fields:
-            if cursor + field_size <= len(file_data):
-                val = struct.unpack_from('<I', file_data, cursor)[0]
-                log(f"  0x{cursor:06X} [{field_name:12}]: {val} (0x{val:08X})")
-                cursor += field_size
-
-        # Show remaining bytes
-        remaining = size - (cursor - offset)
-        if remaining > 0:
-            log(f"\n  Remaining {remaining} bytes:")
-            for i in range(0, remaining, 16):
-                hex_str = ' '.join(f'{file_data[cursor+i+k]:02X}' for k in range(min(16, remaining-i)))
-                vals = struct.unpack_from(f'<{min(4, (remaining-i)//4)}I', file_data, cursor+i) if remaining-i >= 4 else []
-                log(f"    0x{cursor+i:06X}: {hex_str}")
-                if vals:
-                    log(f"             As ints: {', '.join(str(v) for v in vals)}")
-
-    # =========================================================================
-    # PART 3: DATA FILES ANALYSIS
-    # =========================================================================
-    log(f"\n{'='*50}")
-    log("PART 3: DATA FILES ANALYSIS")
-    log(f"{'='*50}")
-
-    # Analyze items.json
-    log(f"\n--- items.json Analysis ---")
-    log(f"Total items: {len(items_json)}")
-
-    colors_found = {}
-    for item_id, item_data in items_json.items():
-        color = item_data.get('color')
-        if color not in colors_found:
-            colors_found[color] = []
-        colors_found[color].append((item_id, item_data.get('name', 'Unknown')))
-
-    log(f"\nColors found in items.json:")
-    for color, items in sorted(colors_found.items(), key=lambda x: str(x[0])):
-        log(f"  {color}: {len(items)} items")
-        # Show first 3 examples
-        for item_id, name in items[:3]:
-            log(f"    - ID {item_id}: {name}")
-
-    # Analyze effects.json
-    log(f"\n--- effects.json Analysis ---")
-    log(f"Total effects: {len(effects_json)}")
-
-    # Sample some effects
-    log("\nSample effects:")
-    for i, (eff_id, eff_data) in enumerate(list(effects_json.items())[:10]):
-        log(f"  {eff_id}: {eff_data}")
-
-    # =========================================================================
-    # PART 4: VESSEL STRUCTURE ANALYSIS
-    # =========================================================================
-    log(f"\n{'='*50}")
-    log("PART 4: VESSEL STRUCTURE DEEP DIVE")
-    log(f"{'='*50}")
-
-    # Find vessel structures and analyze surrounding data
-    vessel_findings = []
-    for offset in range(0x10000, min(0x50000, len(file_data) - 28), 4):
-        val = struct.unpack_from('<I', file_data, offset)[0]
-        if 1000 <= val <= 10010 or 19000 <= val <= 19020:
-            char_id = (val - 1000) // 1000
-            vessel_slot = val % 1000
-            if vessel_slot <= 10:
-                ga_handles = list(struct.unpack_from('<6I', file_data, offset + 4))
-                has_relics = any((h & 0xF0000000) == ITEM_TYPE_RELIC for h in ga_handles if h != 0)
-                vessel_findings.append({
-                    'offset': offset,
-                    'vessel_id': val,
-                    'char_id': char_id,
-                    'vessel_slot': vessel_slot,
-                    'ga_handles': ga_handles,
-                    'has_relics': has_relics
-                })
-
-    log(f"\nFound {len(vessel_findings)} vessel entries")
-
-    # Show vessels with relics and analyze surrounding data
-    log("\n--- Vessels WITH relics (detailed) ---")
-    for v in vessel_findings:
-        if v['has_relics']:
-            log(f"\nVessel ID {v['vessel_id']} (Char {v['char_id']}, Slot {v['vessel_slot']}) at 0x{v['offset']:06X}:")
-            log(f"  GA Handles: {[f'0x{h:08X}' for h in v['ga_handles']]}")
-
-            # Show 32 bytes BEFORE the vessel ID
-            if v['offset'] >= 32:
-                log(f"  32 bytes BEFORE vessel ID:")
-                for i in range(8):
-                    check_offset = v['offset'] - 32 + (i * 4)
-                    check_val = struct.unpack_from('<I', file_data, check_offset)[0]
-                    log(f"    0x{check_offset:06X}: {check_val:10} (0x{check_val:08X})")
-
-            # Show 32 bytes AFTER the GA handles
-            after_offset = v['offset'] + 4 + 24  # vessel_id + 6 handles
-            if after_offset + 32 < len(file_data):
-                log(f"  32 bytes AFTER GA handles:")
-                for i in range(8):
-                    check_offset = after_offset + (i * 4)
-                    check_val = struct.unpack_from('<I', file_data, check_offset)[0]
-                    log(f"    0x{check_offset:06X}: {check_val:10} (0x{check_val:08X})")
-
-            # Resolve relic names for this vessel
-            log(f"  Relic details:")
-            for idx, ga in enumerate(v['ga_handles']):
-                if ga != 0 and (ga & 0xF0000000) == ITEM_TYPE_RELIC:
-                    # Find this relic in ga_relic
-                    for relic in ga_relic:
-                        if relic[0] == ga:
-                            real_id = relic[1] - 2147483648
-                            item_info = items_json.get(str(real_id), {})
-                            name = item_info.get('name', 'Unknown')
-                            color = item_info.get('color', 'Unknown')
-                            log(f"    Slot {idx}: {name} ({color}) - Effects: {relic[2]}, {relic[3]}, {relic[4]}")
-                            break
-                else:
-                    log(f"    Slot {idx}: (empty)")
-
-    # =========================================================================
-    # PART 5: LOOK FOR ADDITIONAL PATTERNS
-    # =========================================================================
-    log(f"\n{'='*50}")
-    log("PART 5: SEARCHING FOR ADDITIONAL PATTERNS")
-    log(f"{'='*50}")
-
-    # Look for color-related values near relics
-    log("\n--- Searching for color values (0-3) near relic data ---")
-    if ga_relic:
-        for relic in ga_relic[:5]:
-            offset = relic[8]
-            real_id = relic[1] - 2147483648
-            item_info = items_json.get(str(real_id), {})
-            color = item_info.get('color', 'Unknown')
-
-            log(f"\nRelic '{item_info.get('name', 'Unknown')}' (color={color}) at 0x{offset:06X}:")
-            # Search in 20 bytes before and after for small values 0-3
-            search_start = max(0, offset - 20)
-            search_end = min(len(file_data), offset + 100)
-
-            small_vals = []
-            for i in range(search_start, search_end):
-                if file_data[i] <= 3:
-                    small_vals.append((i, file_data[i]))
-
-            if small_vals:
-                log(f"  Small values (0-3) found in range 0x{search_start:06X}-0x{search_end:06X}:")
-                for pos, val in small_vals[:20]:
-                    log(f"    0x{pos:06X}: {val}")
-
-    # =========================================================================
-    # PART 6: CSV FILE ANALYSIS
-    # =========================================================================
-    log(f"\n{'='*50}")
-    log("PART 6: CSV PARAM FILE ANALYSIS")
-    log(f"{'='*50}")
-
-    # Read and analyze EquipParamAntique.csv
-    try:
-        import csv
-        import os
-        csv_path = os.path.join(os.path.dirname(__file__), "Resources/Param/EquipParamAntique.csv")
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-
-        log(f"\nEquipParamAntique.csv: {len(rows)} rows")
-        log(f"Columns: {list(rows[0].keys()) if rows else 'N/A'}")
-
-        # Analyze relicColor distribution
-        color_dist = {}
-        deep_relic_count = 0
-        for row in rows:
-            color = row.get('relicColor', 'N/A')
-            is_deep = row.get('isDeepRelic', '0')
-            if color not in color_dist:
-                color_dist[color] = 0
-            color_dist[color] += 1
-            if is_deep == '1':
-                deep_relic_count += 1
-
-        log(f"\nrelicColor distribution:")
-        for color, count in sorted(color_dist.items()):
-            log(f"  {color}: {count} items")
-
-        log(f"\nDeep relics (isDeepRelic=1): {deep_relic_count}")
-
-        # Show sample rows with different colors
-        log(f"\nSample rows by color:")
-        shown_colors = set()
-        for row in rows:
-            color = row.get('relicColor', 'N/A')
-            if color not in shown_colors and len(shown_colors) < 5:
-                shown_colors.add(color)
-                log(f"\n  Color {color} example (ID={row.get('ID')}):")
-                for key, val in list(row.items())[:15]:
-                    log(f"    {key}: {val}")
-    except Exception as e:
-        log(f"\nError reading CSV: {e}")
-
-    # =========================================================================
-    # SUMMARY
-    # =========================================================================
-    log(f"\n{'='*100}")
-    log("SUMMARY")
-    log(f"{'='*100}")
-    log(f"- Save file has {len(ga_relic)} relics parsed")
-    log(f"- items.json has {len(items_json)} items with colors: {list(colors_found.keys())}")
-    log(f"- {len(vessel_findings)} vessel entries found")
-    log(f"- Vessels with relics: {sum(1 for v in vessel_findings if v['has_relics'])}")
-
-    # Write to file
-    with open("debug_relic_analysis.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(output_lines))
-    log(f"\n[Output also saved to debug_relic_analysis.txt]")
-
-    log("\n" + "="*100)
-
-
-def debug_dump_save_analysis(file_data):
-    """Debug function to analyze save file structure and find vessel-related data."""
-    # Call the complete analysis
-    debug_dump_complete_relic_analysis(file_data)
 
 
 def get_character_loadout(char_name):
@@ -661,8 +279,9 @@ def get_character_loadout(char_name):
     Returns:
         Dict with vessel_slot -> {'relics': list of (ga_handle, relic_info), 'unlocked': bool}
     """
-    
-    char_id = data_source.character_names.index(char_name) if char_name in data_source.character_names else -1
+    game_data = SourceDataHandler()
+    loadout_handler = LoadoutHandler()
+    char_id = game_data.character_names.index(char_name) if char_name in game_data.character_names else -1
     if char_id < 0:
         return {}
     hero_type = char_id + 1
@@ -678,7 +297,7 @@ def get_character_loadout(char_name):
                 for relic in ga_relic:
                     if len(relic) >= 8 and relic[0] == ga:  # ga_handle match
                         real_id = relic[1] - 2147483648
-                        item_data = data_source.relics.get(real_id)
+                        item_data = game_data.relics.get(real_id)
                         relic_info = {
                             'ga': ga,
                             'real_id': real_id,
@@ -720,37 +339,6 @@ RELIC_COLOR_HEX = {
     'Unknown': '#888888',
     None: '#888888'
 }
-
-
-def read_murks_and_sigs(data):
-    global current_murks, current_sigs
-    offset = gaprint(data)
-    name_offset = offset + 0x94
-    murks_offset = name_offset + 52
-    sigs_offset = name_offset - 64
-    
-    current_murks = struct.unpack_from('<I', data, murks_offset)[0]
-    current_sigs = struct.unpack_from('<I', data, sigs_offset)[0]
-    
-    return current_murks, current_sigs
-
-
-def write_murks_and_sigs(murks_value, sigs_value):
-    global loadout_handler
-    offset = gaprint(globals.data)
-    name_offset = offset + 0x94
-    murks_offset = name_offset + 52
-    sigs_offset = name_offset - 64
-    
-    # Write murks
-    murks_bytes = murks_value.to_bytes(4, 'little')
-    globals.data = globals.data[:murks_offset] + murks_bytes + globals.data[murks_offset+4:]
-    
-    # Write sigs
-    sigs_bytes = sigs_value.to_bytes(4, 'little')
-    globals.data = globals.data[:sigs_offset] + sigs_bytes + globals.data[sigs_offset+4:]
-    
-    save_current_data()
 
 
 def split_files(file_path, folder_name):
@@ -964,7 +552,7 @@ def name_to_path():
                 if len(file_data) < 0x1000:  # Minimum expected size
                     print(f"Warning: {file_path} is too small ({len(file_data)} bytes), skipping")
                     continue
-                name = read_char_name(file_data)
+                name = InventoryHandler.get_player_name_from_data(file_data)
                 if name:
                     char_name_list.append((name, file_path))
         except struct.error as e:
@@ -995,7 +583,7 @@ def name_to_path_import():
         try:
             with open(file_path, "rb") as f:
                 file_data = f.read()
-                name = read_char_name(file_data)
+                name = InventoryHandler.get_player_name_from_data(file_data)
                 if name:
                     char_name_list_import.append((name, file_path))
         except Exception as e:
@@ -1038,128 +626,10 @@ def delete_relic(ga_index, item_id):
             globals.data = globals.data[:-0x1C] + b'\x00' * 72 + globals.data[-0x1C:]
             
             save_current_data()
-            if relic_checker:
-                relic_checker.remove_illegal(ga_index)
+            inventory = InventoryHandler()  # Singleton
+            inventory.remove_illegal(ga_index)
             return True
     return False
-
-
-def add_relic() -> tuple[bool, Any]:
-    """
-    Adds a new relic item to the player's save file.
-
-    This function performs the following steps:
-    1. Parses the save data to find all existing items and relics
-    2. Generates a unique GA (Game Asset) handle for the new relic
-    3. Finds the last relic in the inventory section to determine insertion point
-    4. Locates an empty item slot that can be converted into a relic slot
-    5. Updates both the inventory reference and the item slot data
-    6. Adjusts file padding to maintain constant file size
-
-    Returns:
-        bool: True if the relic was successfully added, False otherwise
-        ga: New GA handle of the added relic, or None on failure
-    """
-    logger.info("Adding a new relic")
-    last_offset = gaprint(globals.data)
-
-    inventory_count_offset = last_offset + 0x64C
-    inventory_start = last_offset + 0x650
-    inventory_end = inventory_start + 0xA7AB
-    inventory_data = globals.data[inventory_start : inventory_start + inventory_end]
-    logger.debug(f"Last offset: 0x{last_offset:06X}")
-    logger.debug(f"Inventory count offset: 0x{inventory_count_offset:06X}")
-    logger.debug(f"Inventory start: 0x{inventory_start:06X}")
-    logger.debug(f"Inventory end: 0x{inventory_end:06X}")
-
-    # Find the first existing GA handle among all relics.
-    gas = sorted([ga for ga, id, e1, e2, e3, e4, e5, e6, offset, size in ga_relic])
-    first_available_ga = -1
-    for i in range(0, len(gas) - 1):
-        if gas[i] + 1 != gas[i+1]:
-            first_available_ga = gas[i] + 1
-            break
-    logger.debug(f"First available GA: 0x{first_available_ga:08X}")
-
-    # Find the new unique ga for the relic
-    if len(gas) == 0:
-        # If no relics exist, use a default starting value (ITEM_TYPE_RELIC | 0x85).
-        new_ga = (ITEM_TYPE_RELIC | 0x00000085)
-    if first_available_ga > 0:
-        # Use first available ga
-        new_ga = first_available_ga
-    else:
-        # Generate a new unique GA handle by incrementing the max.
-        new_ga = max(gas) + 1
-    
-    if new_ga > (ITEM_TYPE_RELIC | 0xfffffff):
-        # Inventory full
-        logger.info("Inventory full")
-        return False, None
-    new_ga_bytes = new_ga.to_bytes(4, byteorder="little")
-    logger.debug(f"New GA: 0x{new_ga:08X}, bytes: {new_ga_bytes.hex()}")
-
-    # Build the inventory entry (14 bytes) for the new relic.
-    id_to_write = bytearray(new_ga_bytes + b"\x01\x00\x00\x00'|\x00\x00\x00\x00")
-    logger.debug(f"New inventory entry: {id_to_write.hex()}")
-
-    # Build the full relic item data (80 bytes) for the item slot section.
-    replacement = bytearray(
-        new_ga_bytes
-        + b"u\x00\x00\x80u\x00\x00\x80\xff\xff\xff\xff\xe4xk\x00 \xb4l\x00\x9e\xd5j\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\xff\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00"
-    )
-    logger.debug(f"New relic data: {replacement.hex()}")
-
-    # Find the position of the last relic in the inventory section.
-    last_inventory = -1
-    for ga, id, e1, e2, e3, e4, e5, e6, offset, size in ga_relic:
-        gab = ga.to_bytes(4, byteorder="little")
-        last_inventory = max(last_inventory, inventory_data.find(gab))
-    if last_inventory == -1:
-        # No existing relics found in inventory - cannot determine insertion point
-        logger.info("No existing relics found in inventory")
-        return False, None
-    logger.debug(f"Last inventory offset: 0x{last_inventory:06X}")
-
-    # Find an empty slot in the item data section to convert into a relic slot.
-    empty_slot_offset = -1
-    for ga, id, e1, e2, e3, e4, e5, e6, offset, size in ga_items:
-        if ga == 0 and size == 8:
-            empty_slot_offset = offset
-            break
-
-    if empty_slot_offset == -1:
-        # No empty slot available to convert - inventory is full
-        return False, None
-
-    # And Update the inventory count
-    current_count = int.from_bytes(globals.data[inventory_count_offset : inventory_count_offset + 4], "little")
-    new_count = current_count + 1
-    logger.debug(f"Current inventory count: {current_count}")
-    logger.debug(f"New inventory count: {new_count}")
-    globals.data = globals.data[:inventory_count_offset] + new_count.to_bytes(4, "little") + globals.data[inventory_count_offset + 4:]
-    
-    # Write the inventory entry at the calculated position.
-    match = last_inventory + inventory_start
-    globals.data = globals.data[:match] + id_to_write + globals.data[match + 14 :]
-
-    # Convert the empty 8-byte slot into an 80-byte relic slot.
-    globals.data = (
-        globals.data[:empty_slot_offset] + globals.data[empty_slot_offset + 8 :]
-    )
-    # Then, insert the 80-byte relic data at the same position.
-    globals.data = (
-        globals.data[:empty_slot_offset]
-        + replacement
-        + globals.data[empty_slot_offset:]
-    )
-
-    # Remove 72 bytes from the padding area at the end of the file.
-    # The save file must maintain a constant size for the game to load it.
-    globals.data = globals.data[: -0x1C - 72] + globals.data[-0x1C:]
-
-    save_current_data()
-    return True, new_ga
 
 
 def modify_relic(ga_index, item_id, new_effects, new_item_id=None):
@@ -1193,10 +663,10 @@ def modify_relic(ga_index, item_id, new_effects, new_item_id=None):
                 globals.data = globals.data[:pos] + eff_bytes + globals.data[pos+4:]
 
             save_current_data()
-            if relic_checker:
-                relic_checker.update_illegal(ga_index,
-                                             item_id if new_item_id is None else new_item_id,
-                                             new_effects)
+            inventory = InventoryHandler()  # Singleton
+            inventory.update_illegal(ga_index,
+                                     item_id if new_item_id is None else new_item_id,
+                                     new_effects)
             return True
     return False
 
@@ -1204,11 +674,13 @@ def modify_relic(ga_index, item_id, new_effects, new_item_id=None):
 def modify_relic_by_ga(ga_index, new_effects, new_item_id, sort_effects=True):
     """Modify a relic by GA handle only (doesn't require matching item_id)"""
 
+    checker = RelicChecker()
+
     for ga, id, e1, e2, e3, e4, e5, e6, offset, size in ga_relic:
         if ga_index == ga:
             # Sort effects if requested (fixes effect ordering issues)
-            if sort_effects and relic_checker:
-                new_effects = relic_checker.sort_effects(new_effects)
+            if sort_effects and checker:
+                new_effects = checker.sort_effects(new_effects)
 
             # Update item ID
             new_id_internal = new_item_id + 2147483648
@@ -1233,17 +705,17 @@ def modify_relic_by_ga(ga_index, new_effects, new_item_id, sort_effects=True):
                 globals.data = globals.data[:pos] + eff_bytes + globals.data[pos+4:]
 
             save_current_data()
-            if relic_checker:
-                relic_checker.update_illegal(ga_index,
-                                             new_item_id,
-                                             new_effects)
+            inventory = InventoryHandler()  # Singleton
+            inventory.update_illegal(ga_index,
+                                     new_item_id,
+                                     new_effects)
             return True
     return False
 
 
 def check_illegal_relics():
-    global relic_checker
-    illegal_relics = relic_checker.illegal_gas
+    inventory = InventoryHandler()  # Singleton
+    illegal_relics = inventory.illegal_gas
     # for ga, relic_id, e1, e2, e3, e4, e5, e6, offset, size in ga_relic:
     #     # Skip relic entirely if its ID is invalid
     #     if relic_id in (0, -1, 4294967295):
@@ -1433,6 +905,7 @@ def export_relics_to_excel(filepath="relics.xlsx"):
 
     if not ga_relic:
         return False, "No relics found in ga_relic."
+    game_data = SourceDataHandler()
 
     wb = Workbook()
     ws = wb.active
@@ -1457,7 +930,7 @@ def export_relics_to_excel(filepath="relics.xlsx"):
     def get_eff_name(eid):
         if eid in (0, -1, 4294967295):
             return "None"
-        eff = data_source.effects.get(eid, None)
+        eff = game_data.effects.get(eid, None)
         return eff.name if eff else f"UnknownEffect({eid})"
 
     # Fill sheet
@@ -1469,7 +942,7 @@ def export_relics_to_excel(filepath="relics.xlsx"):
         real_id = item_id - 2147483648
         
         # Get relic name
-        item = data_source.relics.get(real_id)
+        item = game_data.relics.get(real_id)
         relic_name = item.name if item else f"UnknownRelic({real_id})"
         relic_color = item.color if item else "Unknown"
 
@@ -1597,7 +1070,7 @@ def delete_all_illegal_relics():
 
 
 def save_current_data():
-    global userdata_path, loadout_handler
+    global userdata_path
     if globals.data and userdata_path:
         with open(userdata_path, 'wb') as f:
 
@@ -1749,14 +1222,23 @@ class SearchableCombobox(ttk.Frame):
 
 
 class SaveEditorGUI:
+    inventory_handler: Optional[InventoryHandler] = None
+    game_data: Optional[SourceDataHandler] = None
+    loadout_handler: Optional[LoadoutHandler] = None
+    relic_checker: Optional[RelicChecker] = None
+
     def __init__(self, root):
-        global loadout_handler, inventory_handler
+        
         # ttk Style setting
         style = ttk.Style()
         style.configure('Add.TButton', foreground='green', font=('Arial', 10, 'bold'))
         style.configure('Danger.TButton', foreground='red', font=('Arial', 10))
         
-        _ensure_data_source()
+        self.game_data = SourceDataHandler()
+        self.relic_checker = RelicChecker()
+        self.inventory_handler = InventoryHandler()
+        self.loadout_handler = LoadoutHandler()
+
         self.root = root
         self.root.title("Elden Ring NightReign Save Editor")
         self.root.geometry("1000x700")
@@ -1869,9 +1351,6 @@ class SaveEditorGUI:
             # Split files
             split_files(last_file, 'decrypted_output')
 
-            # Load JSON data
-            if not load_json_data():
-                return
             self.update_inventory_comboboxes()
             self.update_vessel_tab_comboboxes()
 
@@ -1963,7 +1442,7 @@ class SaveEditorGUI:
         # Character selector
         ttk.Label(controls_frame, text="Character:").pack(side='left', padx=(20, 5))
         # Only show the 10 real playable characters in the dropdown (not internal parsing names)
-        playable_characters = data_source.character_names[:10]
+        playable_characters = self.game_data.character_names[:10]
         self.vessel_char_var = tk.StringVar(value=playable_characters[0])
         self.vessel_char_combo = ttk.Combobox(controls_frame, textvariable=self.vessel_char_var,
                                                values=playable_characters, state="readonly", width=12)
@@ -2060,12 +1539,12 @@ class SaveEditorGUI:
         def on_add_to_preset(vessel_slot):
             hero_type = self.vessel_char_combo.current()+1
             preset_name = open_new_preset_name_dialog()
-            vessel_id = loadout_handler.heroes[hero_type].vessels[vessel_slot]['vessel_id']
-            relics = loadout_handler.heroes[hero_type].vessels[vessel_slot]['relics']
+            vessel_id = self.loadout_handler.heroes[hero_type].vessels[vessel_slot]['vessel_id']
+            relics = self.loadout_handler.heroes[hero_type].vessels[vessel_slot]['relics']
             if preset_name is None:
                 return
             try:
-                loadout_handler.push_preset(hero_type, vessel_id, relics, preset_name)
+                self.loadout_handler.push_preset(hero_type, vessel_id, relics, preset_name)
                 save_current_data()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
@@ -2180,14 +1659,14 @@ class SaveEditorGUI:
             vessel_data_info = get_vessel_info(char_name, vessel_slot)
             vessel_name = vessel_data_info['name']
             hero_type = self.vessel_char_combo.current()+1
-            vessel_id = loadout_handler.heroes[hero_type].vessels[vessel_slot]['vessel_id']
+            vessel_id = self.loadout_handler.heroes[hero_type].vessels[vessel_slot]['vessel_id']
 
             # Update vessel frame title with actual vessel name
             if vessel_slot < len(self.vessel_frames):
                 self.vessel_frames[vessel_slot].config(text=vessel_name)
 
                 vessel_info = loadout.get(vessel_slot, {})
-                is_unlocked = is_vessel_unlocked(vessel_id, data_source)
+                is_unlocked = is_vessel_unlocked(vessel_id)
 
                 # Update status label
                 if vessel_slot < len(self.vessel_status_labels):
@@ -2234,8 +1713,8 @@ class SaveEditorGUI:
                             effect_names.append("None")
                         elif eff == 4294967295:
                             effect_names.append("Empty")
-                        elif eff in data_source.effects:
-                            eff_name = data_source.effects[eff].name.replace('\n', ' ').strip()
+                        elif eff in self.game_data.effects:
+                            eff_name = self.game_data.effects[eff].name.replace('\n', ' ').strip()
                             effect_names.append(eff_name)
                         else:
                             effect_names.append(f"Unknown")
@@ -2293,7 +1772,7 @@ class SaveEditorGUI:
         self.preset_data_map = {}
 
         char_name = self.vessel_char_var.get()
-        char_id = data_source.character_names.index(char_name) if char_name in data_source.character_names else -1
+        char_id = self.game_data.character_names.index(char_name) if char_name in self.game_data.character_names else -1
         hero_type = char_id + 1
         if char_id == -1:
             return
@@ -2314,7 +1793,7 @@ class SaveEditorGUI:
                 ga_handle = relic[0]
                 item_id = relic[1]
                 real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                item_info = data_source.relics.get(real_id)
+                item_info = self.game_data.relics.get(real_id)
                 is_deep = 2000000 <= real_id <= 2019999
                 effects = [relic[2], relic[3], relic[4]] if len(relic) >= 5 else []
                 curses = [relic[5], relic[6], relic[7]] if len(relic) >= 8 else []
@@ -2344,11 +1823,11 @@ class SaveEditorGUI:
         # Find presets for this character
         card_row = 0
         
-        presets = loadout_handler.heroes[hero_type].presets
+        presets = self.loadout_handler.heroes[hero_type].presets
 
         for preset in presets:
             vessel_id = preset.get('vessel_id', 0)
-            vessel_slot = loadout_handler.get_vessel_index_in_hero(hero_type, vessel_id)
+            vessel_slot = self.loadout_handler.get_vessel_index_in_hero(hero_type, vessel_id)
             preset_name = preset.get('name', 'Unknown')
             ga_handles = preset.get('relics', [])
 
@@ -2369,7 +1848,7 @@ class SaveEditorGUI:
                         effects = []
                         for eff_id in relic_info.get('effects', []):
                             if eff_id and eff_id not in [0, -1, 4294967295]:
-                                eff = data_source.effects.get(eff_id)
+                                eff = self.game_data.effects.get(eff_id)
                                 eff_name = eff.name if eff else f'Effect {eff_id}'
                                 effects.append(eff_name)
 
@@ -2377,7 +1856,7 @@ class SaveEditorGUI:
                         curses = []
                         for curse_id in relic_info.get('curses', []):
                             if curse_id and curse_id not in [0, -1, 4294967295]:
-                                _curse = data_source.effects.get(curse_id)
+                                _curse = self.game_data.effects.get(curse_id)
                                 curse_name = _curse.name if _curse else f'Curse {curse_id}'
                                 curses.append(curse_name)
 
@@ -2475,7 +1954,7 @@ class SaveEditorGUI:
                                        f"into {char_name}'s {cur_vessel_name}?\n\n"
                                        f"This will overwrite the current relics in that vessel."):
                     try:
-                        loadout_handler.equip_preset(cur_preset['hero_type'], cur_preset['index'])
+                        self.loadout_handler.equip_preset(cur_preset['hero_type'], cur_preset['index'])
                         save_current_data()
                         messagebox.showinfo("Success", f"Preset '{cur_preset_name}' loaded successfully!")
                         self.refresh_inventory_and_vessels()
@@ -2546,7 +2025,7 @@ class SaveEditorGUI:
                 ga_handle = relic[0]
                 item_id = relic[1]
                 real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                item_info = data_source.relics.get(real_id)
+                item_info = self.game_data.relics.get(real_id)
                 ga_to_full_info[ga_handle] = {
                     'name': item_info.name if item_info else f'ID:{real_id}',
                     'color': item_info.color if item_info else 'Unknown',
@@ -2581,7 +2060,7 @@ class SaveEditorGUI:
         def get_effect_name(eff_id):
             if eff_id in [0, -1, 4294967295]:
                 return None
-            eff = data_source.effects.get(eff_id)
+            eff = self.game_data.effects.get(eff_id)
             return eff.name if eff else f'Unknown ({eff_id})'
 
         # ============ LEFT PANEL ============
@@ -2685,12 +2164,12 @@ class SaveEditorGUI:
         def is_unique_relic(relic_id):
             """Check if a relic is unique (all effect pools contain only 1 effect each)"""
             try:
-                pools = data_source.relics[real_id].effect_slots
+                pools = self.game_data.relics[real_id].effect_slots
                 # Check each non-empty effect pool
                 for pool_id in pools[:3]:  # Only check effect pools, not curse pools
                     if pool_id == -1:
                         continue
-                    pool_effects = data_source.get_pool_effects(pool_id)
+                    pool_effects = self.game_data.get_pool_effects(pool_id)
                     if len(pool_effects) > 1:
                         return False  # Has multiple effects, not unique
                 return True  # All pools have 0 or 1 effect
@@ -2779,7 +2258,7 @@ class SaveEditorGUI:
                 return
             ga_handles[idx] = 0
             try:
-                loadout_handler.replace_preset_relic(preset['hero_type'], idx, 0, preset_index=preset['index'])
+                self.loadout_handler.replace_preset_relic(preset['hero_type'], idx, 0, preset_index=preset['index'])
                 slot_relic_data[idx] = None
                 update_slot_display()
                 update_details_panel()
@@ -2815,7 +2294,7 @@ class SaveEditorGUI:
                         ga_handle = relic[0]
                         item_id = relic[1]
                         real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                        item_info = data_source.relics.get(real_id)
+                        item_info = self.game_data.relics.get(real_id)
                         ga_to_full_info[ga_handle] = {
                             'name': item_info.name if item_info else f'ID:{real_id}',
                             'color': item_info.color if item_info else 'Unknown',
@@ -2923,7 +2402,7 @@ class SaveEditorGUI:
                 ga_handle = relic[0]
                 item_id = relic[1]
                 real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-                item_info = data_source.relics.get(real_id)
+                item_info = self.game_data.relics.get(real_id)
                 # Deep relic check: ID range 2000000-2019999
                 is_deep_relic = 2000000 <= real_id <= 2019999
                 # Get effects/curses if available
@@ -2987,7 +2466,7 @@ class SaveEditorGUI:
                 relic_list_title.config(text=f"Available {slot_type} Relics (All Colors)")
 
             filtered = []
-            ga_hero_map = loadout_handler.relic_ga_hero_map
+            ga_hero_map = self.loadout_handler.relic_ga_hero_map
             hero_type =self.vessel_char_combo.current()+1
             for relic in all_relics:
                 # Filter by deep/normal based on selected slot
@@ -3073,7 +2552,7 @@ class SaveEditorGUI:
 
             # Write to file
             try:
-                loadout_handler.replace_preset_relic(preset['hero_type'], idx, new_ga,
+                self.loadout_handler.replace_preset_relic(preset['hero_type'], idx, new_ga,
                                                      preset_index=preset['index'])
                 slot_relic_data[idx] = relic_data
                 update_slot_display()
@@ -3275,7 +2754,7 @@ class SaveEditorGUI:
         def get_effect_name(eff_id):
             if eff_id in [0, -1, 4294967295]:
                 return None
-            eff = data_source.effects.get(eff_id)
+            eff = self.game_data.effects.get(eff_id)
             return eff.name if eff else f'Unknown ({eff_id})'
 
         def update_details(event=None):
@@ -3343,7 +2822,7 @@ class SaveEditorGUI:
             ga_handle = relic[0]
             item_id = relic[1]
             real_id = item_id - 2147483648 if item_id > 2147483648 else item_id
-            item_info = data_source.relics.get(real_id)
+            item_info = self.game_data.relics.get(real_id)
 
             name = item_info.name if item_info else f'ID:{real_id}'
             color = item_info.color if item_info else 'Unknown'
@@ -3382,8 +2861,8 @@ class SaveEditorGUI:
         """Show context menu for vessel relic slot"""
         def clear_relic(slot_index):
             hero_type = self.vessel_char_combo.current()+1
-            vessel_id = loadout_handler.heroes[hero_type].vessels[vessel_slot]['vessel_id']
-            loadout_handler.replace_vessel_relic(hero_type, vessel_id,
+            vessel_id = self.loadout_handler.heroes[hero_type].vessels[vessel_slot]['vessel_id']
+            self.loadout_handler.replace_vessel_relic(hero_type, vessel_id,
                                                  slot_index, 0)
             self.refresh_inventory_and_vessels()
 
@@ -3684,14 +3163,14 @@ class SaveEditorGUI:
         search_lower = search_term.lower()
 
         # Get relics from inventory that match criteria
-        ga_hero_map = loadout_handler.relic_ga_hero_map
+        ga_hero_map = self.loadout_handler.relic_ga_hero_map
         for relic in ga_relic:
             ga = relic[0]
             real_id = relic[1] - 2147483648
             effects = [relic[2], relic[3], relic[4]]
 
             # Get item info
-            item_data = data_source.relics[real_id]
+            item_data = self.game_data.relics[real_id]
             item_name = item_data.name if item_data else f"Unknown{real_id}"
             item_color = item_data.color if item_data else "Unknown"
 
@@ -3731,8 +3210,8 @@ class SaveEditorGUI:
                 # Search in name, ID, or effects
                 effect_names = []
                 for eff_id in effects:
-                    if eff_id in data_source.effects:
-                        effect_names.append(data_source.effects[eff_id].name.lower())
+                    if eff_id in self.game_data.effects:
+                        effect_names.append(self.game_data.effects[eff_id].name.lower())
 
                 searchable = f"{item_name.lower()} {real_id} {' '.join(effect_names)}"
                 if search_lower not in searchable:
@@ -3745,8 +3224,8 @@ class SaveEditorGUI:
                     effect_displays.append("None")
                 elif eff_id == 4294967295:
                     effect_displays.append("Empty")
-                elif eff_id in data_source.effects:
-                    effect_displays.append(data_source.effects[eff_id].name[:20])
+                elif eff_id in self.game_data.effects:
+                    effect_displays.append(self.game_data.effects[eff_id].name[:20])
                 else:
                     effect_displays.append("Unknown")
 
@@ -3765,14 +3244,14 @@ class SaveEditorGUI:
     def replace_vessel_relic(self, char_name, vessel_slot, slot_index, new_ga):
         """Replace a relic in a vessel slot with a new one"""
 
-        char_id = data_source.character_names.index(char_name) if char_name in data_source.character_names else -1
+        char_id = self.game_data.character_names.index(char_name) if char_name in self.game_data.character_names else -1
         hero_type = char_id + 1
         if char_id < 0:
             messagebox.showerror("Error", f"Unknown character: {char_name}")
             return False
-        vessel_id = loadout_handler.get_vessel_id(hero_type, vessel_slot)
+        vessel_id = self.loadout_handler.get_vessel_id(hero_type, vessel_slot)
         try:
-            loadout_handler.replace_vessel_relic(hero_type, vessel_id, slot_index, new_ga)
+            self.loadout_handler.replace_vessel_relic(hero_type, vessel_id, slot_index, new_ga)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to replace relic: {e}")
             return False
@@ -3782,15 +3261,15 @@ class SaveEditorGUI:
     def open_edit_relic_dialog(self, vessel_slot, slot_index):
         """Open dialog to edit a relic's effects from the vessel page"""
         char_name = self.vessel_char_var.get()
-        char_id = data_source.character_names.index(char_name) if char_name in data_source.character_names else -1
+        char_id = self.game_data.character_names.index(char_name) if char_name in self.game_data.character_names else -1
         hero_type = char_id + 1
         if char_id < 0:
             messagebox.showerror("Error", f"Unknown character: {char_name}")
             return
 
         # Get the GA handle for this slot
-        vessel_id = loadout_handler.get_vessel_id(hero_type, vessel_slot)
-        ga_handle = loadout_handler.get_relic_ga_handle(hero_type, vessel_id, slot_index)
+        vessel_id = self.loadout_handler.get_vessel_id(hero_type, vessel_slot)
+        ga_handle = self.loadout_handler.get_relic_ga_handle(hero_type, vessel_id, slot_index)
         if ga_handle == 0:
             messagebox.showwarning("Warning", "Empty slot - no relic to edit")
             return
@@ -3813,15 +3292,15 @@ class SaveEditorGUI:
     def copy_vessel_relic_effects(self, vessel_slot, slot_index):
         """Copy effects from a relic in a vessel slot to clipboard"""
         char_name = self.vessel_char_var.get()
-        char_id = data_source.character_names.index(char_name) if char_name in data_source.character_names else -1
+        char_id = self.game_data.character_names.index(char_name) if char_name in self.game_data.character_names else -1
         hero_type = char_id + 1
         if char_id < 0:
             messagebox.showerror("Error", f"Unknown character: {char_name}")
             return
 
         # Get the GA handle for this slot
-        vessel_id = loadout_handler.get_vessel_id(hero_type, vessel_slot)
-        ga_handle = loadout_handler.get_relic_ga_handle(hero_type, vessel_id, slot_index)
+        vessel_id = self.loadout_handler.get_vessel_id(hero_type, vessel_slot)
+        ga_handle = self.loadout_handler.get_relic_ga_handle(hero_type, vessel_id, slot_index)
         if ga_handle == 0:
             messagebox.showwarning("Warning", "Empty slot - no relic to copy")
             return
@@ -3831,7 +3310,7 @@ class SaveEditorGUI:
             if ga == ga_handle:
                 real_id = id_val - 2147483648
                 effects = [e1, e2, e3, se1, se2, se3]
-                _item = data_source.relics.get(real_id)
+                _item = self.game_data.relics.get(real_id)
                 item_name = _item.name if _item else f"Unknown ({real_id})"
                 self.clipboard_effects = (effects, real_id, item_name)
 
@@ -4006,7 +3485,7 @@ class SaveEditorGUI:
         # Character filter dropdown
         ttk.Label(search_frame, text="👤 Char:").pack(side='left', padx=(10, 2))
         self.char_filter_var = tk.StringVar(value="All")
-        char_options = ["All"] + data_source.character_names
+        char_options = ["All"] + self.game_data.character_names
         self.char_filter_combo = ttk.Combobox(search_frame, textvariable=self.char_filter_var,
                                                values=char_options, state="readonly", width=10)
         self.char_filter_combo.pack(side='left', padx=2)
@@ -4139,13 +3618,13 @@ class SaveEditorGUI:
     def update_vessel_tab_comboboxes(self):
         # Reload Vessel Character ComboBox Names
         vessel_char_combobox_idx = self.vessel_char_combo.current()
-        self.vessel_char_combo['values'] = data_source.character_names
-        self.vessel_char_var.set(data_source.character_names[vessel_char_combobox_idx])
+        self.vessel_char_combo['values'] = self.game_data.character_names
+        self.vessel_char_var.set(self.game_data.character_names[vessel_char_combobox_idx])
         
     def update_inventory_comboboxes(self):
         # Reload Inventory Character Filter ComboBox Names
         filter_combo_idx = self.char_filter_combo.current()
-        self.char_filter_combo['values'] = ["All"] + data_source.character_names
+        self.char_filter_combo['values'] = ["All"] + self.game_data.character_names
         self.char_filter_var.set(self.char_filter_combo['values'][filter_combo_idx])
 
     def on_language_change(self, event=None):
@@ -4193,9 +3672,6 @@ class SaveEditorGUI:
         # Split files
         split_files(file_path, 'decrypted_output')
 
-        # Load JSON data
-        if not load_json_data():
-            return
         self.update_inventory_comboboxes()
         self.update_vessel_tab_comboboxes()
 
@@ -4264,7 +3740,7 @@ class SaveEditorGUI:
         self.load_character(path)
 
     def load_character(self, path):
-        global userdata_path, steam_id, data_source, ga_relic, relic_checker, loadout_handler, inventory_handler
+        global userdata_path, steam_id, ga_relic
         userdata_path = path
 
         try:
@@ -4273,21 +3749,17 @@ class SaveEditorGUI:
 
             # Parse items
             gaprint(globals.data)
-            inventory_handler = InventoryHandler()
-            inventory_handler.parse()
-            inventory_handler.debug_print()
+            self.inventory_handler = InventoryHandler()
+            self.inventory_handler.parse()
+            self.inventory_handler.debug_print()
 
             # Parse Vessels and Presets
-            loadout_handler = LoadoutHandler(data_source, ga_relic)
+            loadout_handler = LoadoutHandler()
             loadout_handler.parse()
 
             # Initialize Relic Checker (set_illegal_relics will be called by reload_inventory)
-            relic_checker = RelicChecker(ga_relic=ga_relic,
-                                         data_source=data_source)
+            relic_checker = RelicChecker()
             # NOTE: Don't call set_illegal_relics() here - reload_inventory() will call it
-
-            # Read stats
-            read_murks_and_sigs(globals.data)
 
             steam_id = find_steam_id(globals.data)
 
@@ -4322,7 +3794,8 @@ class SaveEditorGUI:
         if globals.data is None:
             return
         
-        murks, sigs = read_murks_and_sigs(globals.data)
+        murks = self.inventory_handler.murks
+        sigs = self.inventory_handler.sigs
         self.murks_display.config(text=str(murks))
         self.sigs_display.config(text=str(sigs))
     
@@ -4336,10 +3809,11 @@ class SaveEditorGUI:
             return
         
         new_value = simpledialog.askinteger("Modify Murks", 
-                                           f"Current Murks: {current_murks}\n\nEnter new value (decimal):",
-                                           initialvalue=current_murks)
+                                           f"Current Murks: {self.inventory_handler.murks}\n\nEnter new value (decimal):",
+                                           initialvalue=self.inventory_handler.murks)
         if new_value is not None:
-            write_murks_and_sigs(new_value, current_sigs)
+            self.inventory_handler.murks = new_value
+            save_current_data()
             self.refresh_stats()
             messagebox.showinfo("Success", "Murks updated successfully")
     
@@ -4350,24 +3824,25 @@ class SaveEditorGUI:
         
         
         new_value = simpledialog.askinteger("Modify Sigs", 
-                                           f"Current Sigs: {current_sigs}\n\nEnter new value (decimal):",
-                                           initialvalue=current_sigs)
+                                           f"Current Sigs: {self.inventory_handler.sigs}\n\nEnter new value (decimal):",
+                                           initialvalue=self.inventory_handler.sigs)
         if new_value is not None:
-            write_murks_and_sigs(current_murks, new_value)
+            self.inventory_handler.sigs = new_value
+            save_current_data()
             self.refresh_stats()
             messagebox.showinfo("Success", "Sigs updated successfully")
             
     def reparse(self):
         # Parse items - this updates ga_relic with current data
         gaprint(globals.data)
+        self.inventory_handler.parse()
 
         # Re-parse vessel assignments
         # parse_vessel_assignments(data)
-        loadout_handler.reload_ga_relics(ga_relic)
-        loadout_handler.parse()
+        self.loadout_handler.parse()
         
     def refresh_inventory_ui(self):
-        global ga_relic, relic_checker
+        global ga_relic
         self.update_inventory_comboboxes()
         # Clear treeview
         for item in self.tree.get_children():
@@ -4401,7 +3876,7 @@ class SaveEditorGUI:
             real_id = id - 2147483648
             
             # Get item name and color
-            _item = data_source.relics[real_id]
+            _item = self.game_data.relics[real_id]
             item_name = _item.name if _item else "Unknown"
             item_color = _item.color if _item else "Unknown"
             
@@ -4414,21 +3889,21 @@ class SaveEditorGUI:
                     effect_names.append("None")
                 elif eff_id == 4294967295:
                     effect_names.append("Empty")
-                elif eff_id in data_source.effects:
+                elif eff_id in self.game_data.effects:
                     effect_names.append(
-                        "".join(data_source.effects[eff_id].name.splitlines()))
+                        "".join(self.game_data.effects[eff_id].name.splitlines()))
                 else:
                     effect_names.append(f"Unknown ({eff_id})")
             
             # Check if this relic is illegal or forbidden
             is_illegal = ga in illegal_gas
             is_forbidden = real_id in forbidden_relics
-            is_curse_illegal = relic_checker and ga in relic_checker.curse_illegal_gas
-            is_strict_invalid = relic_checker and ga in relic_checker.strict_invalid_gas
+            is_curse_illegal = self.inventory_handler and ga in self.inventory_handler.curse_illegal_gas
+            is_strict_invalid = self.inventory_handler and ga in self.inventory_handler.strict_invalid_gas
 
             # Get character assignment (which characters have this relic equipped)
-            equipped_by_hero_type = loadout_handler.relic_ga_hero_map.get(ga, [])
-            equipped_by = [data_source.character_names[h_t-1] for h_t in equipped_by_hero_type]
+            equipped_by_hero_type = self.loadout_handler.relic_ga_hero_map.get(ga, [])
+            equipped_by = [self.game_data.character_names[h_t-1] for h_t in equipped_by_hero_type]
             equipped_by_str = ", ".join(equipped_by) if equipped_by else "-"
 
             # Check if this is a deep relic (ID range 2000000-2019999)
@@ -4483,7 +3958,7 @@ class SaveEditorGUI:
             
     def refresh_inventory_lightly(self):
         """Refresh the inventory UI without heavy loading"""
-        global ga_relic, relic_checker
+        global ga_relic
 
         if globals.data is None:
             messagebox.showwarning("Warning", "No character loaded")
@@ -4497,7 +3972,7 @@ class SaveEditorGUI:
     
     def reload_inventory(self):
         """Reload inventory data from save file and refresh UI"""
-        global ga_relic, relic_checker
+        global ga_relic
 
         if globals.data is None:
             messagebox.showwarning("Warning", "No character loaded")
@@ -4507,9 +3982,8 @@ class SaveEditorGUI:
         
         def heavy_loading():
             # Update relic checker with new ga_relic and recalculate illegal relics
-            if relic_checker:
-                relic_checker.ga_relic = ga_relic
-                relic_checker.set_illegal_relics()
+            if self.inventory_handler:
+                self.inventory_handler.set_illegal_relics()
             
         self.run_task_async(heavy_loading, (), "Loading...",
                             callback=self.refresh_inventory_ui)
@@ -4741,7 +4215,7 @@ class SaveEditorGUI:
             real_id = id - 2147483648
             if ga == ga_handle and real_id == item_id:
                 effects = [e1, e2, e3, se1, se2, se3]
-                _item = data_source.relics.get(item_id)
+                _item = self.game_data.relics.get(item_id)
                 item_name = _item.name if _item else f"Unknown ({item_id})"
                 self.clipboard_effects = (effects, real_id, item_name)
                 messagebox.showinfo("Copied", f"Copied effects from:\n{item_name}\n\nEffects: {len([e for e in effects if e != 0])} effect(s)")
@@ -4766,14 +4240,14 @@ class SaveEditorGUI:
         item_id = int(tags[1])
 
         # Get target relic info
-        target_name = data_source.relics[item_id].name
+        target_name = self.game_data.relics[item_id].name
         source_effects, source_id, source_name = self.clipboard_effects
 
         # Build effect names for display
         effect_names = []
         for eff_id in source_effects:
             if eff_id != 0:
-                eff = data_source.effects.get(eff_id)
+                eff = self.game_data.effects.get(eff_id)
                 eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 effect_names.append(eff_name)
 
@@ -4788,8 +4262,8 @@ class SaveEditorGUI:
             return
 
         # Check if this would make the relic illegal
-        if relic_checker:
-            would_be_illegal = relic_checker.check_invalidity(item_id, source_effects)
+        if self.relic_checker:
+            would_be_illegal = self.relic_checker.check_invalidity(item_id, source_effects)
             if would_be_illegal:
                 warn_msg = "⚠️ Warning: These effects may not be valid for this relic type.\n\n"
                 warn_msg += "The relic may be flagged as illegal after pasting.\n\nContinue anyway?"
@@ -4949,7 +4423,7 @@ class SaveEditorGUI:
             messagebox.showwarning("Warning", "No character loaded")
             return
 
-        if relic_checker is None:
+        if self.relic_checker is None:
             messagebox.showwarning("Warning", "Relic checker not initialized")
             return
 
@@ -4966,10 +4440,10 @@ class SaveEditorGUI:
             if real_id in RelicChecker.UNIQUENESS_IDS:
                 continue
 
-            _relic = data_source.relics.get(real_id)
+            _relic = self.game_data.relics.get(real_id)
             item_name = _relic.name if _relic else f"Unknown ({real_id})"
-            is_illegal = ga in relic_checker.illegal_gas
-            is_strict_invalid = ga in relic_checker.strict_invalid_gas
+            is_illegal = ga in self.inventory_handler.illegal_gas
+            is_strict_invalid = ga in self.inventory_handler.strict_invalid_gas
 
             if not is_illegal and not is_strict_invalid:
                 continue
@@ -4977,7 +4451,7 @@ class SaveEditorGUI:
             # For illegal relics: try to find strictly valid first, then fall back to valid
             if is_illegal:
                 # First try strictly valid (best outcome)
-                strict_order = relic_checker.get_strictly_valid_order(real_id, effects)
+                strict_order = self.relic_checker.get_strictly_valid_order(real_id, effects)
                 if strict_order:
                     fixable_illegal.append((ga, id, real_id, real_id, item_name, f"{item_name} (reorder)", strict_order, False))
                     continue
@@ -4985,17 +4459,17 @@ class SaveEditorGUI:
                 # Try finding a different ID that's strictly valid
                 valid_id = self._find_strictly_valid_relic_id(real_id, effects)
                 if valid_id and valid_id != real_id:
-                    _valid_relic = data_source.relics.get(valid_id)
+                    _valid_relic = self.game_data.relics.get(valid_id)
                     new_name = _valid_relic.name if _valid_relic else f"Unknown ({valid_id})"
-                    strict_order = relic_checker.get_strictly_valid_order(valid_id, effects)
-                    if strict_order and not relic_checker.check_invalidity(valid_id, strict_order):
+                    strict_order = self.relic_checker.get_strictly_valid_order(valid_id, effects)
+                    if strict_order and not self.relic_checker.check_invalidity(valid_id, strict_order):
                         fixable_illegal.append((ga, id, real_id, valid_id, item_name, new_name, strict_order, False))
                         continue
 
                 # Fall back to just valid (not strictly valid)
                 valid_id = self._find_valid_relic_id_for_effects(real_id, effects)
                 if valid_id is not None:
-                    _valid_relic = data_source.relics.get(valid_id)
+                    _valid_relic = self.game_data.relics.get(valid_id)
                     new_name = _valid_relic.name if _valid_relic else f"Unknown ({valid_id})"
                     if valid_id == real_id:
                         fixable_illegal.append((ga, id, real_id, valid_id, item_name, f"{new_name} (reorder)", effects, True))
@@ -5008,7 +4482,7 @@ class SaveEditorGUI:
             # For strict invalid relics (not illegal)
             elif is_strict_invalid:
                 # Try strictly valid permutation for current ID
-                strict_order = relic_checker.get_strictly_valid_order(real_id, effects)
+                strict_order = self.relic_checker.get_strictly_valid_order(real_id, effects)
                 if strict_order:
                     fixable_strict.append((ga, id, real_id, real_id, item_name, f"{item_name} (reorder)", strict_order, False))
                     continue
@@ -5016,10 +4490,10 @@ class SaveEditorGUI:
                 # Try finding a different ID that's strictly valid
                 valid_id = self._find_strictly_valid_relic_id(real_id, effects)
                 if valid_id and valid_id != real_id:
-                    _valid_relic = data_source.relics.get(valid_id)
+                    _valid_relic = self.game_data.relics.get(valid_id)
                     new_name = _valid_relic.name if _valid_relic else f"Unknown ({valid_id})"
-                    strict_order = relic_checker.get_strictly_valid_order(valid_id, effects)
-                    if strict_order and not relic_checker.check_invalidity(valid_id, strict_order):
+                    strict_order = self.relic_checker.get_strictly_valid_order(valid_id, effects)
+                    if strict_order and not self.relic_checker.check_invalidity(valid_id, strict_order):
                         fixable_strict.append((ga, id, real_id, valid_id, item_name, new_name, strict_order, False))
                         continue
 
@@ -5098,16 +4572,15 @@ class SaveEditorGUI:
         self.refresh_inventory_lightly()
 
     def add_relic_tk(self):
-        global inventory_handler
         if globals.data is None:
             messagebox.showwarning(
                 "Warning", "No save file loaded. Please open a save file first."
             )
             return
         try:
-            inventory_handler.debug_print(non_zero_only=True)
-            added_result, new_ga = inventory_handler.add_relic_to_inventory()
-            inventory_handler.debug_print(non_zero_only=True)
+            self.inventory_handler.debug_print(non_zero_only=True)
+            added_result, new_ga = self.inventory_handler.add_relic_to_inventory()
+            self.inventory_handler.debug_print(non_zero_only=True)
             if added_result:
                 messagebox.showinfo("Success", "Dummy relic added. Refreshing inventory.")
                 self.refresh_inventory_and_vessels()
@@ -5126,16 +4599,16 @@ class SaveEditorGUI:
     def _find_valid_relic_id_for_effects(self, current_id, effects):
         """Find a valid relic ID that can have the given effects (must be same color)"""
         # Get the current relic's color
-        if current_id not in data_source._relic_table.index:
+        if current_id not in self.game_data._relic_table.index:
             return None
-        current_color = data_source._relic_table.loc[current_id, "relicColor"]
+        current_color = self.game_data._relic_table.loc[current_id, "relicColor"]
 
         # Count how many effects need curses
         curses_needed = sum(1 for e in effects[:3]
-                          if e not in [0, -1, 4294967295] and data_source.effect_needs_curse(e))
+                          if e not in [0, -1, 4294967295] and self.game_data.effect_needs_curse(e))
 
         # Get the range group of current ID
-        id_range = relic_checker.find_id_range(current_id)
+        id_range = self.relic_checker.find_id_range(current_id)
         if not id_range:
             return None
 
@@ -5147,10 +4620,10 @@ class SaveEditorGUI:
 
         # First check if current ID is actually valid (effects match AND has enough curse slots)
         # Use allow_empty_curses=True because we're checking if primary effects fit the pools
-        if relic_checker.has_valid_order(current_id, effects):
+        if self.relic_checker.has_valid_order(current_id, effects):
             # Also check it has enough curse slots for effects that need curses
             try:
-                pools = data_source.relics[current_id].effect_slots
+                pools = self.game_data.relics[current_id].effect_slots
                 available_curse_slots = sum(1 for p in pools[3:] if p != -1)
                 if available_curse_slots >= curses_needed:
                     return current_id  # Already valid, return same ID
@@ -5159,17 +4632,17 @@ class SaveEditorGUI:
 
         # Search within the same range for a valid ID with SAME color only
         for test_id in range(range_start, range_end + 1):
-            if test_id not in data_source._relic_table.index:
+            if test_id not in self.game_data._relic_table.index:
                 continue
 
             # Must be same color - never change color
-            test_color = data_source._relic_table.loc[test_id, "relicColor"]
+            test_color = self.game_data._relic_table.loc[test_id, "relicColor"]
             if test_color != current_color:
                 continue
 
             # Check if relic has enough curse slots for effects that need curses
             try:
-                pools = data_source.relics[test_id].effect_slots
+                pools = self.game_data.relics[test_id].effect_slots
                 available_curse_slots = sum(1 for p in pools[3:] if p != -1)
                 if available_curse_slots < curses_needed:
                     continue
@@ -5177,19 +4650,19 @@ class SaveEditorGUI:
                 continue
 
             # Check if effects are valid for this ID (allow empty curses)
-            if relic_checker.has_valid_order(test_id, effects):
+            if self.relic_checker.has_valid_order(test_id, effects):
                 return test_id
 
         return None
 
     def _find_strictly_valid_relic_id(self, current_id, effects):
         """Find a relic ID where effects can be strictly valid (same color)"""
-        if current_id not in data_source._relic_table.index:
+        if current_id not in self.game_data._relic_table.index:
             return None
-        current_color = data_source._relic_table.loc[current_id, "relicColor"]
+        current_color = self.game_data._relic_table.loc[current_id, "relicColor"]
 
         # Get range
-        id_range = relic_checker.find_id_range(current_id)
+        id_range = self.relic_checker.find_id_range(current_id)
         if not id_range:
             return None
 
@@ -5201,15 +4674,15 @@ class SaveEditorGUI:
         for test_id in range(range_start, range_end + 1):
             if test_id == current_id:
                 continue
-            if test_id not in data_source._relic_table.index:
+            if test_id not in self.game_data._relic_table.index:
                 continue
 
-            test_color = data_source._relic_table.loc[test_id, "relicColor"]
+            test_color = self.game_data._relic_table.loc[test_id, "relicColor"]
             if test_color != current_color:
                 continue
 
             # Check if effects can be strictly valid with this ID
-            valid_order = relic_checker.get_strictly_valid_order(test_id, effects)
+            valid_order = self.relic_checker.get_strictly_valid_order(test_id, effects)
             if valid_order:
                 return test_id
 
@@ -5320,6 +4793,8 @@ class SaveEditorGUI:
 
 
 class ModifyRelicDialog:
+    game_data: Optional[SourceDataHandler] = None
+    relic_checker: Optional[RelicChecker] = None
     def __init__(self, parent, ga_handle, item_id, callback):
         self.callback = callback
         
@@ -5329,6 +4804,8 @@ class ModifyRelicDialog:
         self.dialog.transient(parent)
 
         self.safe_mode_var = tk.BooleanVar(value=True)
+        self.game_data = SourceDataHandler()
+        self.relic_checker = RelicChecker()
         
         self.setup_ui()
         self.load_relic(ga_handle, item_id)
@@ -5372,8 +4849,8 @@ class ModifyRelicDialog:
                 entry.insert(0, str(current_eff))
 
                 # Also update the name display
-                if current_eff in data_source.effects:
-                    name = data_source.effects[current_eff].name
+                if current_eff in self.game_data.effects:
+                    name = self.game_data.effects[current_eff].name
                     self.effect_name_labels[i].config(text=name)
                 else:
                     self.effect_name_labels[i].config(text="Unknown Effect")
@@ -5387,7 +4864,7 @@ class ModifyRelicDialog:
                      2: ("Yellow", "#cccc00"), 3: ("Green", "#66cc66")}
         try:
             current_relic_id = int(self.item_id_entry.get())
-            color_idx = data_source._relic_table.loc[current_relic_id, "relicColor"]
+            color_idx = self.game_data._relic_table.loc[current_relic_id, "relicColor"]
             color_name, color_hex = color_map.get(color_idx, ("Unknown", "gray"))
             self.current_color_label.config(text=color_name, foreground=color_hex)
         except (KeyError, ValueError):
@@ -5397,7 +4874,7 @@ class ModifyRelicDialog:
         """Update the relic structure label showing effect/curse slots"""
         try:
             current_relic_id = int(self.item_id_entry.get())
-            pools = data_source.relics[current_relic_id].effect_slots
+            pools = self.game_data.relics[current_relic_id].effect_slots
 
             # Count effect slots and curse slots
             effect_slots = sum(1 for p in pools[:3] if p != -1)
@@ -5422,7 +4899,7 @@ class ModifyRelicDialog:
         """Update the relic type indicator (Original vs Scene/1.02)"""
         try:
             current_relic_id = int(self.item_id_entry.get())
-            type_name, description, color_hex = data_source.get_relic_type_info(current_relic_id)
+            type_name, description, color_hex = self.game_data.get_relic_type_info(current_relic_id)
             self.relic_type_label.config(text=type_name, foreground=color_hex)
             self.relic_type_info_label.config(text=f"— {description}")
         except (KeyError, ValueError):
@@ -5435,21 +4912,21 @@ class ModifyRelicDialog:
             return
 
         try:
-            pools = data_source.relics[relic_id].effect_slots
+            pools = self.game_data.relics[relic_id].effect_slots
         except KeyError:
             self.status_label.config(text="❌ ILLEGAL: Unknown Relic ID", foreground='red')
             self.illegal_reason_label.config(text=f"Relic ID {relic_id} does not exist in the game data.")
             return
 
         # Get invalid reason with index of first problematic effect
-        invalid_reason, invalid_idx = relic_checker.check_invalidity(relic_id, effects, True) if relic_checker else (InvalidReason.VALIDATION_ERROR, -1)
+        invalid_reason, invalid_idx = self.relic_checker.check_invalidity(relic_id, effects, True) if self.relic_checker else (InvalidReason.VALIDATION_ERROR, -1)
         is_curse_illegal_flag = is_curse_invalid(invalid_reason)
 
         if invalid_reason == InvalidReason.NONE:
             # Check for strict invalid (valid but 0% weight effects)
-            is_strict_invalid = relic_checker.is_strict_invalid(relic_id, effects, invalid_reason) if relic_checker else False
+            is_strict_invalid = self.relic_checker.is_strict_invalid(relic_id, effects, invalid_reason) if self.relic_checker else False
             if is_strict_invalid:
-                strict_reason = relic_checker.get_strict_invalid_reason(relic_id, effects) if relic_checker else None
+                strict_reason = self.relic_checker.get_strict_invalid_reason(relic_id, effects) if self.relic_checker else None
                 self.status_label.config(text="⚠️ STRICT INVALID", foreground='#008080')  # Teal color
                 reason_text = "This relic is technically valid but has effects with 0% drop weight in their assigned pools.\n"
                 if strict_reason:
@@ -5507,11 +4984,11 @@ class ModifyRelicDialog:
         if invalid_reason == InvalidReason.EFF_NOT_IN_ROLLABLE_POOL:
             if invalid_idx >= 0 and invalid_idx < 3:
                 eff_id = effects[invalid_idx]
-                eff = data_source.effects.get(eff_id)
+                eff = self.game_data.effects.get(eff_id)
                 eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 # Check if effect can exist on this relic type at all
                 all_relic_pools = set(p for p in pools[:3] if p != -1)
-                can_exist = any(eff in data_source.get_pool_rollable_effects(p) for p in all_relic_pools)
+                can_exist = any(eff in self.game_data.get_pool_rollable_effects(p) for p in all_relic_pools)
                 if not can_exist:
                     reasons.append(f"• Effect '{eff_name}' has 0% drop weight on {relic_type_desc}s - cannot exist on this relic type")
                 else:
@@ -5522,7 +4999,7 @@ class ModifyRelicDialog:
         if invalid_reason == InvalidReason.EFF_MUST_EMPTY:
             if invalid_idx >= 0 and invalid_idx < 3:
                 eff_id = effects[invalid_idx]
-                eff = data_source.effects.get(eff_id)
+                eff = self.game_data.effects.get(eff_id)
                 eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 reasons.append(f"• Effect slot {invalid_idx + 1} should be empty but has '{eff_name}'")
             else:
@@ -5531,7 +5008,7 @@ class ModifyRelicDialog:
         if invalid_reason == InvalidReason.CURSE_MUST_EMPTY:
             if invalid_idx >= 3:
                 curse_id = effects[invalid_idx]
-                curse = data_source.effects.get(curse_id)
+                curse = self.game_data.effects.get(curse_id)
                 curse_name = curse.name if curse else f"Unknown ({curse_id})"
                 slot_num = invalid_idx - 2  # Convert to 1-based curse slot
                 reasons.append(f"• Curse slot {slot_num} should be empty but has '{curse_name}'")
@@ -5542,7 +5019,7 @@ class ModifyRelicDialog:
             if invalid_idx >= 3:
                 eff_idx = invalid_idx - 3
                 eff_id = effects[eff_idx]
-                eff = data_source.effects.get(eff_id)
+                eff = self.game_data.effects.get(eff_id)
                 eff_name = eff.name if eff else f"Unknown ({eff_id})"
                 reasons.append(f"• Effect '{eff_name}' REQUIRES a curse but curse slot {eff_idx + 1} is empty")
             else:
@@ -5551,7 +5028,7 @@ class ModifyRelicDialog:
         if invalid_reason == InvalidReason.CURSE_NOT_IN_ROLLABLE_POOL:
             if invalid_idx >= 3:
                 curse_id = effects[invalid_idx]
-                curse = data_source.effects.get(curse_id)
+                curse = self.game_data.effects.get(curse_id)
                 curse_name = curse.name if curse else f"Unknown ({curse_id})"
                 slot_num = invalid_idx - 2
                 reasons.append(f"• Curse '{curse_name}' is not valid for slot {slot_num}")
@@ -5594,7 +5071,7 @@ class ModifyRelicDialog:
 
             # Get relic pools
             try:
-                pools = data_source.relics[relic_id].effect_slots
+                pools = self.game_data.relics[relic_id].effect_slots
                 lines.append(f"Pools (eff1,eff2,eff3,curse1,curse2,curse3): {pools}")
             except KeyError:
                 lines.append(f"Pools: Relic ID {relic_id} not found in table!")
@@ -5603,8 +5080,8 @@ class ModifyRelicDialog:
             lines.append("")
 
             # Check validation status
-            if relic_checker:
-                invalid_reason, invalid_effect_index = relic_checker.check_invalidity(relic_id, effects, True)
+            if self.relic_checker:
+                invalid_reason, invalid_effect_index = self.relic_checker.check_invalidity(relic_id, effects, True)
                 is_curse_illegal = is_curse_invalid(invalid_reason)
                 _invalid_idx_msg = "" if invalid_effect_index == -1 else f" at effect index {invalid_effect_index + 1}"
                 _invalid_curse_idx_msg = "" if invalid_effect_index == -1 else f" at curse index {invalid_effect_index - 2}"
@@ -5626,8 +5103,8 @@ class ModifyRelicDialog:
                             if eff in [-1, 0, 4294967295]:
                                 lines.append(f"Effect {i}: {eff} (empty)")
                             else:
-                                needs_curse = data_source.effect_needs_curse(eff)
-                                effect_pools = data_source.get_effect_pools(eff)
+                                needs_curse = self.game_data.effect_needs_curse(eff)
+                                effect_pools = self.game_data.get_effect_pools(eff)
                                 if needs_curse:
                                     curse_required_count += 1
                                 lines.append(f"Effect {i}: {eff} -> needs_curse={needs_curse}, pools={effect_pools}")
@@ -5670,14 +5147,14 @@ class ModifyRelicDialog:
                                     seq_valid = False
                                     issues.append(f"slot{idx}: pool=-1 but eff={eff}")
                             else:
-                                pool_effs = data_source.get_pool_effects_strict(eff_pool)
+                                pool_effs = self.game_data.get_pool_effects_strict(eff_pool)
                                 if eff not in pool_effs:
                                     seq_valid = False
                                     issues.append(f"slot{idx}: eff {eff} not in pool {eff_pool}")
 
                             # Check curse (only for multi-effect relics)
                             if is_multi_effect:
-                                eff_needs_curse = data_source.effect_needs_curse(eff)
+                                eff_needs_curse = self.game_data.effect_needs_curse(eff)
 
                                 if eff_needs_curse:
                                     # Effect requires a curse
@@ -5688,14 +5165,14 @@ class ModifyRelicDialog:
                                         issues.append(f"curse{idx}: effect REQUIRES curse, but empty!")
                                         seq_valid = False
                                     else:
-                                        pool_curses = data_source.get_pool_effects_strict(curse_pool)
+                                        pool_curses = self.game_data.get_pool_effects_strict(curse_pool)
                                         if curse not in pool_curses:
                                             issues.append(f"curse{idx}: {curse} not in pool {curse_pool}")
                                             seq_valid = False
                                 elif curse_pool != -1:
                                     # Effect doesn't need curse but slot supports one (optional)
                                     if curse not in [-1, 0, 4294967295]:
-                                        pool_curses = data_source.get_pool_effects_strict(curse_pool)
+                                        pool_curses = self.game_data.get_pool_effects_strict(curse_pool)
                                         if curse not in pool_curses:
                                             issues.append(f"curse{idx}: {curse} not in pool {curse_pool}")
                                             seq_valid = False
@@ -5924,8 +5401,8 @@ class ModifyRelicDialog:
                 return
 
             # Use relic_checker to sort effects (keeps curses paired with their primary effects)
-            if relic_checker:
-                sorted_effects = relic_checker.sort_effects(current_effects)
+            if self.relic_checker:
+                sorted_effects = self.relic_checker.sort_effects(current_effects)
 
                 # Update entry fields with sorted values
                 for i, entry in enumerate(self.effect_entries):
@@ -5946,8 +5423,8 @@ class ModifyRelicDialog:
             effect_id = int(self.effect_entries[index].get())
             if effect_id in [0, 4294967295, -1]:
                 self.effect_name_labels[index].config(text="None")
-            elif effect_id in data_source.effects:
-                name = data_source.effects[effect_id].name
+            elif effect_id in self.game_data.effects:
+                name = self.game_data.effects[effect_id].name
                 self.effect_name_labels[index].config(text=name)
             else:
                 self.effect_name_labels[index].config(text="Unknown Effect")
@@ -5984,7 +5461,7 @@ class ModifyRelicDialog:
             has_curse = curse_id not in [0, -1, 4294967295]
 
             if effect_id not in [0, -1, 4294967295]:
-                needs_curse = data_source.effect_needs_curse(effect_id)
+                needs_curse = self.game_data.effect_needs_curse(effect_id)
 
             # Update the curse slot label
             base_label = effect_labels_base[curse_idx]
@@ -6017,12 +5494,12 @@ class ModifyRelicDialog:
         """Open search dialog for items"""
         _items = []
         if self.safe_mode_var.get():
-            _safe_range = data_source.get_safe_relic_ids() if relic_checker else []
-            _df = data_source._relic_table.copy()
+            _safe_range = self.game_data.get_safe_relic_ids() if self.relic_checker else []
+            _df = self.game_data._relic_table.copy()
             _df = _df[_df.index.isin(_safe_range)]
             _items = _df.index.to_list()
         else:
-            _items = [int(k) for k in data_source.relics.keys()]
+            _items = [int(k) for k in self.game_data.relics.keys()]
         SearchDialog(self.dialog, self.item_id, "relics", _items, "Select Relic", self.on_item_selected)
 
     def find_valid_relic_ids(self, relic_id, effects, color):
@@ -6034,13 +5511,13 @@ class ModifyRelicDialog:
         # Count how many curses are NEEDED based on the effects (not just present)
         # Effects that can only roll on 3-effect relics need curses
         curses_needed = sum(1 for e in effects[:3]
-                            if e not in [0, -1, 4294967295] and data_source.effect_needs_curse(e))
+                            if e not in [0, -1, 4294967295] and self.game_data.effect_needs_curse(e))
 
         # Also count curses that are present (for validation)
         curses_present = sum(1 for e in effects[3:] if e not in [0, -1, 4294967295])
 
         # Check if current relic is a deep relic (ID range 2000000-2019999)
-        is_current_deep = relic_checker.is_deep_relic(relic_id) if relic_checker else False
+        is_current_deep = self.relic_checker.is_deep_relic(relic_id) if self.relic_checker else False
 
         # Search for valid relics with matching structure
 
@@ -6051,7 +5528,7 @@ class ModifyRelicDialog:
         # Must have enough curse slots for effects that NEED curses
         # Must also have enough curse slots for curses that ARE present
         # Check color match (if we have a color preference)
-        relic_table = data_source.get_filtered_relics_df(color, is_current_deep,
+        relic_table = self.game_data.get_filtered_relics_df(color, is_current_deep,
                                                          effect_count, curses_needed)
         relic_table.set_index("ID", inplace=True)
         valid_candidates = []
@@ -6070,9 +5547,9 @@ class ModifyRelicDialog:
 
             # Check if effects are valid WITH rearrangement (like the game does)
             # Use require_curses_present=False so we can find relics where curses CAN be added
-            invalid_reason = relic_checker.check_invalidity(relic_id, effects) if relic_checker else None
+            invalid_reason = self.relic_checker.check_invalidity(relic_id, effects) if self.relic_checker else None
             if is_curse_invalid(invalid_reason) or invalid_reason == InvalidReason.NONE:
-                if not relic_checker.is_strict_invalid(relic_id, effects, invalid_reason):
+                if not self.relic_checker.is_strict_invalid(relic_id, effects, invalid_reason):
                     valid_candidates.append(relic_id)
         return valid_candidates
 
@@ -6094,7 +5571,7 @@ class ModifyRelicDialog:
             # Count how many curses are NEEDED based on the effects (not just present)
             # Effects that can only roll on 3-effect relics need curses
             curses_needed = sum(1 for e in current_effects[:3]
-                                if e not in [0, -1, 4294967295] and data_source.effect_needs_curse(e))
+                                if e not in [0, -1, 4294967295] and self.game_data.effect_needs_curse(e))
 
             # Also count curses that are present (for validation)
             curses_present = sum(1 for e in current_effects[3:] if e not in [0, -1, 4294967295])
@@ -6102,7 +5579,7 @@ class ModifyRelicDialog:
             # Get current relic's color and deep status
             current_relic_id = int(self.item_id_entry.get())
             try:
-                current_color = data_source._relic_table.loc[current_relic_id, "relicColor"]
+                current_color = self.game_data._relic_table.loc[current_relic_id, "relicColor"]
             except KeyError:
                 current_color = None
             valid_candidates = self.find_valid_relic_ids(current_relic_id, current_effects, current_color)
@@ -6110,7 +5587,7 @@ class ModifyRelicDialog:
             # Determine which positions NEED curse slots
             curse_positions_needed = []
             for i, eff in enumerate(current_effects[:3]):
-                if eff not in [0, -1, 4294967295] and data_source.effect_needs_curse(eff):
+                if eff not in [0, -1, 4294967295] and self.game_data.effect_needs_curse(eff):
                     curse_positions_needed.append(i + 1)  # 1-indexed for display
 
             if valid_candidates:
@@ -6119,12 +5596,12 @@ class ModifyRelicDialog:
                 self.item_id_var.set(str(best_match))
 
                 # Get the name for display
-                _relic = data_source.relics.get(best_match)
+                _relic = self.game_data.relics.get(best_match)
                 relic_name = _relic.name if _relic else "Unknown"
                 relic_color = _relic.color if _relic else "Unknown"
 
                 # Get the new relic's curse slot configuration
-                new_pools = data_source.relics[best_match].effect_slots
+                new_pools = self.game_data.relics[best_match].effect_slots
                 curse_slots_info = []
                 for i in range(3):
                     if new_pools[i + 3] != -1:
@@ -6184,9 +5661,9 @@ class ModifyRelicDialog:
 
             # Check if current relic is already valid for these effects
             try:
-                current_pools = data_source.relics[current_relic_id].effect_slots
-                invalid_reason = relic_checker.check_invalidity(current_relic_id, current_effects)
-                if not invalid_reason and not relic_checker.is_strict_invalid(current_relic_id, current_effects, invalid_reason):
+                current_pools = self.game_data.relics[current_relic_id].effect_slots
+                invalid_reason = self.relic_checker.check_invalidity(current_relic_id, current_effects)
+                if not invalid_reason and not self.relic_checker.is_strict_invalid(current_relic_id, current_effects, invalid_reason):
                     # Current relic is fine, no change needed
                     return
             except (KeyError, IndexError):
@@ -6194,7 +5671,7 @@ class ModifyRelicDialog:
 
             # Get current relic's color
             try:
-                current_color = data_source._relic_table.loc[current_relic_id, "relicColor"]
+                current_color = self.game_data._relic_table.loc[current_relic_id, "relicColor"]
             except KeyError:
                 current_color = None
 
@@ -6237,12 +5714,12 @@ class ModifyRelicDialog:
                 return False
             else:
                 # Effect must be in its pool
-                pool_effects = data_source.get_pool_effects_strict(effect_pool)
+                pool_effects = self.game_data.get_pool_effects_strict(effect_pool)
                 if eff not in pool_effects:
                     return False
 
                 # Check if this effect NEEDS a curse (deep-only effect)
-                if data_source.effect_needs_curse(eff):
+                if self.game_data.effect_needs_curse(eff):
                     if curse_pool == -1:
                         # Effect needs curse but relic has no curse slot in this position
                         return False
@@ -6256,7 +5733,7 @@ class ModifyRelicDialog:
                 return False
             else:
                 # Curse must be in its pool
-                pool_curses = data_source.get_pool_effects_strict(curse_pool)
+                pool_curses = self.game_data.get_pool_effects_strict(curse_pool)
                 if curse not in pool_curses:
                     return False
 
@@ -6303,13 +5780,13 @@ class ModifyRelicDialog:
                     break
                 else:
                     # Effect must be in its pool
-                    pool_effects = data_source.get_pool_effects_strict(effect_pool)
+                    pool_effects = self.game_data.get_pool_effects_strict(effect_pool)
                     if eff not in pool_effects:
                         sequence_valid = False
                         break
 
                     # Check if this effect NEEDS a curse (deep-only effect)
-                    if data_source.effect_needs_curse(eff):
+                    if self.game_data.effect_needs_curse(eff):
                         if curse_pool == -1:
                             # Effect needs curse but relic has no curse slot here
                             sequence_valid = False
@@ -6330,7 +5807,7 @@ class ModifyRelicDialog:
                     break
                 else:
                     # Curse must be in its pool
-                    pool_curses = data_source.get_pool_effects_strict(curse_pool)
+                    pool_curses = self.game_data.get_pool_effects_strict(curse_pool)
                     if curse not in pool_curses:
                         sequence_valid = False
                         break
@@ -6346,8 +5823,9 @@ class ModifyRelicDialog:
         target_color_name = color_names.get(target_color, "Unknown")
 
         # Guard: Check if relic is assigned to a character or preset
+        loadout_handler = LoadoutHandler()
         assigned_to_hero_type = loadout_handler.relic_ga_hero_map.get(self.ga_handle, [])
-        assigned_to = [data_source.character_names[h_t-1] for h_t in assigned_to_hero_type]
+        assigned_to = [self.game_data.character_names[h_t-1] for h_t in assigned_to_hero_type]
         if assigned_to:
             messagebox.showwarning(
                 "Cannot Change Color",
@@ -6375,7 +5853,7 @@ class ModifyRelicDialog:
             # Get current relic's color to check if already the target
             current_relic_id = int(self.item_id_entry.get())
             try:
-                current_color = data_source._relic_table.loc[current_relic_id, "relicColor"]
+                current_color = self.game_data._relic_table.loc[current_relic_id, "relicColor"]
                 if current_color == target_color:
                     messagebox.showinfo("Info", f"Relic is already {target_color_name}!")
                     return
@@ -6390,7 +5868,7 @@ class ModifyRelicDialog:
                 self.item_id_var.set(str(best_match))
 
                 # Get the name for display
-                _relic = data_source.relics.get(best_match)
+                _relic = self.game_data.relics.get(best_match)
                 relic_name = _relic.name if _relic else f"UnknownRelic_{best_match}"
 
                 messagebox.showinfo(
@@ -6428,13 +5906,13 @@ class ModifyRelicDialog:
 
             try:
                 _effects = [int(entry.get()) for entry in self.effect_entries]
-                _pools = data_source.get_adjusted_pool_sequence(_cut_relic_id, _effects)
+                _pools = self.game_data.get_adjusted_pool_sequence(_cut_relic_id, _effects)
                 _pool_id = _pools[effect_index]
             except (KeyError, IndexError, ValueError) as e:
                 messagebox.showerror("Error", f"Could not get pool for relic {_cut_relic_id}: {e}")
                 return
 
-            _pool_effects = data_source.get_pool_rollable_effects(_pool_id)
+            _pool_effects = self.game_data.get_pool_rollable_effects(_pool_id)
 
             # For curse slots (index >= 3), if this specific pool is disabled,
             # use ALL available curse pools combined (game rearranges internally)
@@ -6444,7 +5922,7 @@ class ModifyRelicDialog:
                 for i in range(3):
                     curse_pool = _pools[3 + i]
                     if curse_pool != -1:
-                        pool_effects = data_source.get_pool_rollable_effects(curse_pool)
+                        pool_effects = self.game_data.get_pool_rollable_effects(curse_pool)
                         all_curse_effects.update(pool_effects)
                 _pool_effects = list(all_curse_effects)
 
@@ -6462,21 +5940,21 @@ class ModifyRelicDialog:
                 )
                 return
 
-            _effect_params_df = data_source._effect_params.copy()
+            _effect_params_df = self.game_data._effect_params.copy()
             _effect_params_df = _effect_params_df[_effect_params_df.index.isin(_pool_effects)]
             match effect_index:
                 case 1:
                     _effect_id_1 = int(self.effect_entries[0].get())
-                    _conflic_id_1 = data_source.effects[_effect_id_1].conflict_id
+                    _conflic_id_1 = self.game_data.effects[_effect_id_1].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         (_effect_params_df["compatibilityId"] != _conflic_id_1)
                     ]
                 case 2:
                     _effect_id_1 = int(self.effect_entries[0].get())
-                    _conflic_id_1 = data_source.effects[_effect_id_1].conflict_id
+                    _conflic_id_1 = self.game_data.effects[_effect_id_1].conflict_id
                     _effect_id_2 = int(self.effect_entries[1].get())
-                    _conflic_id_2 = data_source.effects[_effect_id_2].conflict_id
+                    _conflic_id_2 = self.game_data.effects[_effect_id_2].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         ((_effect_params_df["compatibilityId"] != _conflic_id_1) &
@@ -6484,16 +5962,16 @@ class ModifyRelicDialog:
                     ]
                 case 4:
                     _effect_id_4 = int(self.effect_entries[3].get())
-                    _conflic_id_4 = data_source.effects[_effect_id_4].conflict_id
+                    _conflic_id_4 = self.game_data.effects[_effect_id_4].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         (_effect_params_df["compatibilityId"] != _conflic_id_4)
                     ]
                 case 5:
                     _effect_id_4 = int(self.effect_entries[3].get())
-                    _conflic_id_4 = data_source.effects[_effect_id_4].conflict_id
+                    _conflic_id_4 = self.game_data.effects[_effect_id_4].conflict_id
                     _effect_id_5 = int(self.effect_entries[4].get())
-                    _conflic_id_5 = data_source.effects[_effect_id_5].conflict_id
+                    _conflic_id_5 = self.game_data.effects[_effect_id_5].conflict_id
                     _effect_params_df = _effect_params_df[
                         (_effect_params_df["compatibilityId"] == -1) |
                         ((_effect_params_df["compatibilityId"] != _conflic_id_4) &
@@ -6501,7 +5979,7 @@ class ModifyRelicDialog:
                     ]
             _items = _effect_params_df.index.tolist()
         else:
-            _items = [int(k) for k in data_source.effects.keys()]
+            _items = [int(k) for k in self.game_data.effects.keys()]
 
         # For curse slots, add "No Curse (Empty)" option at the top
         if is_curse_slot:
@@ -6509,7 +5987,7 @@ class ModifyRelicDialog:
 
         # Build dialog title with relic type info in safe mode
         if self.safe_mode_var.get():
-            relic_type, _, _ = data_source.get_relic_type_info(_cut_relic_id)
+            relic_type, _, _ = self.game_data.get_relic_type_info(_cut_relic_id)
             slot_type = "Curse" if is_curse_slot else "Effect"
             dialog_title = f"Select {slot_type} {(effect_index % 3) + 1} — {relic_type} Pools"
         else:
@@ -6533,7 +6011,6 @@ class ModifyRelicDialog:
     
     def apply_changes(self):
         # Extract effect IDs from entries
-        global relic_checker
         new_effects = []
 
         for entry in self.effect_entries:
@@ -6542,7 +6019,7 @@ class ModifyRelicDialog:
                 new_effects.append(value)
             except ValueError:
                 new_effects.append(0)
-        new_effects = relic_checker.sort_effects(new_effects)
+        new_effects = self.relic_checker.sort_effects(new_effects)
 
         # Check if item ID was changed
         new_item_id = None
@@ -6565,7 +6042,7 @@ class ModifyRelicDialog:
             )
             return
 
-        invalid_reason = relic_checker.check_invalidity(entered_id, new_effects)
+        invalid_reason = self.relic_checker.check_invalidity(entered_id, new_effects)
         is_curse_illegal = is_curse_invalid(invalid_reason)
 
         # Warn user if the relic will be invalid
@@ -6609,11 +6086,18 @@ class ModifyRelicDialog:
 
 class SearchDialog:
     """Search dialog for JSON items"""
+
+    game_data: Optional[SourceDataHandler] = None
+    relic_checker: Optional[RelicChecker] = None
+
     def __init__(self, parent, item_id, search_type, id_list, title, callback):
         self.id_list = id_list
         self.callback = callback
         self.search_type = search_type
         self.item_id = item_id
+
+        self.game_data = SourceDataHandler()
+        self.relic_checker = RelicChecker()
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(title)
@@ -6662,7 +6146,7 @@ class SearchDialog:
             self.lock_color_var = tk.BooleanVar(value=True)
             checkbox_lock_color = ttk.Checkbutton(color_row, variable=self.lock_color_var,
                                                 onvalue=True, offvalue=False, text="Lock color:")
-            cur_color = data_source.relics[self.item_id].color
+            cur_color = self.game_data.relics[self.item_id].color
             
             self.color_var = tk.StringVar(value=cur_color)
             self.color_int_var = 0
@@ -6711,10 +6195,10 @@ class SearchDialog:
         for item_id in self.id_list:
             item_str = ""
             if self.search_type == "effects":
-                item_str = data_source.effects[int(item_id)].name
+                item_str = self.game_data.effects[int(item_id)].name
             elif self.search_type == "relics":
-                name = data_source.relics[int(item_id)].name
-                relic_slot = data_source.get_relic_slot_count(int(item_id))
+                name = self.game_data.relics[int(item_id)].name
+                relic_slot = self.game_data.get_relic_slot_count(int(item_id))
                 item_str = f"{name} (effects: {relic_slot[0]}, curses:{relic_slot[1]})"
             self.all_items.append((str(item_id), item_str))
         
@@ -6736,14 +6220,14 @@ class SearchDialog:
         for item_id, name in self.all_items:
             if self.search_type == "relics":
                 # filter by color
-                if self.lock_color_var.get() and data_source.relics[int(item_id)].color != self.color_var.get():
+                if self.lock_color_var.get() and self.game_data.relics[int(item_id)].color != self.color_var.get():
                     continue
-                eff_slots, curse_slots = data_source.get_relic_slot_count(int(item_id))
+                eff_slots, curse_slots = self.game_data.get_relic_slot_count(int(item_id))
                 # filter by relic type
                 if self.relic_type_var.get() != "All":
-                    if self.relic_type_var.get() == "Normal" and relic_checker.is_deep_relic(int(item_id)):
+                    if self.relic_type_var.get() == "Normal" and self.relic_checker.is_deep_relic(int(item_id)):
                         continue
-                    if self.relic_type_var.get() == "Deep" and not relic_checker.is_deep_relic(int(item_id)):
+                    if self.relic_type_var.get() == "Deep" and not self.relic_checker.is_deep_relic(int(item_id)):
                         continue
                 # filter by effect slots
                 if self.effect_slots_var.get() != "Any":
