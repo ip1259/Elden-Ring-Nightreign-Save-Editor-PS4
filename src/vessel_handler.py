@@ -1,21 +1,22 @@
 import struct
 import re
-import time
 from copy import deepcopy
 from source_data_handler import SourceDataHandler
 from relic_checker import RelicChecker
-from basic_class import Item
+from inventory_handler import InventoryHandler
+from basic_class import ItemEntry
 import globals
 from globals import ITEM_TYPE_RELIC, COLOR_MAP, get_now_timestamp
 
 
-def is_vessel_unlocked(vessel_id: int, game_data: SourceDataHandler):
-    _vessel_data = game_data.antique_stand_param[
-        game_data.antique_stand_param["ID"] == vessel_id][
-            ["goodsId"]
-        ]
-    _vessel_goods_id = _vessel_data['goodsId'].values[0]
-    return _vessel_goods_id in globals.goods_id_list
+def is_vessel_unlocked(vessel_id: int):
+    try:
+        game_data = SourceDataHandler()  # SourceDataHandler is a singleton Class
+        inventory = InventoryHandler()  # InventoryHandler is a singleton Class
+        _vessel_goods_id = game_data.vessels[vessel_id].goods_id
+        return _vessel_goods_id in inventory.vessels
+    except KeyError:
+        return False
 
 
 class HeroLoadout:
@@ -50,8 +51,8 @@ class VesselParser:
     ITEM_TYPE_ARMOR = 0x90000000
     ITEM_TYPE_RELIC = 0xC0000000
 
-    def __init__(self, data_handler: SourceDataHandler):
-        self.game_data = data_handler
+    def __init__(self):
+        self.game_data = SourceDataHandler()  # Singleton
         self.heroes: dict[int, HeroLoadout] = {}
         self.relic_ga_hero_map = {}
         self.base_offset = None
@@ -314,16 +315,9 @@ class VesselModifier:
 
 
 class Validator:
-    def __init__(self, ga_relics: list[tuple], game_data: SourceDataHandler):
-        self.cur_relics = {}
-        for r in ga_relics:
-            self.cur_relics[r[0]] = r
-        self.game_data = game_data
-
-    def reload_ga_relics(self, ga_relics: list[tuple]):
-        self.cur_relics = {}
-        for r in ga_relics:
-            self.cur_relics[r[0]] = r
+    def __init__(self):
+        self.game_data = SourceDataHandler()  # Singleton
+        self.inventory = InventoryHandler()  # Singleton
 
     def check_hero(self, heroes: dict[int, HeroLoadout], hero_type: int):
         if not 1 <= hero_type <= 10:
@@ -356,13 +350,12 @@ class Validator:
                 if relic == 0:
                     # Empty always Valid
                     continue
-                ga_relic: tuple = self.cur_relics.get(relic)
-                if not ga_relic:
+                relic_entry: ItemEntry = self.inventory.relics.get(relic)
+                if not relic_entry:
                     # Can't find relic in inventory
                     raise LookupError("Relic not found in current relics Inventory.")
-                type_bits = ga_relic[0] & 0xF0000000
-                if type_bits == ITEM_TYPE_RELIC:
-                    real_id = ga_relic[1] - 2147483648
+                if not relic_entry.is_relic:
+                    real_id = relic_entry.state.real_item_id
                     # Check relic type match
                     is_deep_relic = RelicChecker.is_deep_relic(real_id)
                     if relic_index < 3 and is_deep_relic:
@@ -374,7 +367,6 @@ class Validator:
                     # Check color match
                     slot_color = COLOR_MAP[_vessel_info.relic_slots[relic_index]]
                     new_relic_color = self.game_data.relics[real_id].color
-                    # new_relic_color = self.game_data.get_relic_origin_structure()[str(real_id)]["color"]
                     if slot_color != new_relic_color and slot_color != COLOR_MAP[4]:
                         # Color mismatch
                         raise ValueError(f"Color mismatch in relic slot {relic_index+1}.")
@@ -439,11 +431,23 @@ class LoadoutHandler:
     class PresetsCapacityFullError(Exception):
         pass
 
-    def __init__(self, game_data: SourceDataHandler, ga_relics: list[tuple]):
-        self.parser = VesselParser(game_data)
+    _instance = None
+    _initialized = False
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(LoadoutHandler, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+        self.game_data = SourceDataHandler()
+        self.inventory = InventoryHandler()
+        self.parser = VesselParser(self.game_data)
         self.modifier = VesselModifier()
-        self.validator = Validator(ga_relics, game_data)
-        self.game_data = game_data
+        self.validator = Validator()
         self.all_presets = []
 
     @property
@@ -474,9 +478,6 @@ class LoadoutHandler:
 
     def update_all_loadouts(self):
         self.modifier.update_all_loadouts(self.heroes)
-
-    def reload_ga_relics(self, ga_relics: list[tuple]):
-        self.validator.reload_ga_relics(ga_relics)
 
     def check_hero(self, hero_type: int):
         return hero_type in self.heroes
