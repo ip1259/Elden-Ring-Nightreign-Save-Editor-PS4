@@ -207,7 +207,7 @@ class InventoryHandler:
                 self._cur_last_acquisition_id = max(self._cur_last_acquisition_id, entry.acquisition_id)
                 if entry.is_relic:
                     entry.link_state(self.states[state_ga_to_index[entry.ga_handle]])
-                    self.relics[entry.item_id] = entry
+                    self.relics[entry.ga_handle] = entry
 
             count_in_data = struct.unpack_from("<I", globals.data, self.entry_count_offset)[0]
             if self.entry_count != count_in_data:
@@ -308,6 +308,7 @@ class InventoryHandler:
             logger.info("Removed relic at state index %d", target_state_index)
             self._cur_last_state_index = target_state_index-1
             self.parse()  # Just make sure everything is fine
+            self.remove_illegal(ga_handel)
             return True
 
     def update_relic_state(self, state_index):
@@ -353,6 +354,9 @@ class InventoryHandler:
             else:
                 raise ValueError("Relic not found in inventory")
             self.update_relic_state(target_state_index)
+            self.update_illegal(ga_handle,
+                                self.states[target_state_index].real_item_id,
+                                self.states[target_state_index].effects_and_curses)
             return True
 
     @property

@@ -354,7 +354,7 @@ class Validator:
                 if not relic_entry:
                     # Can't find relic in inventory
                     raise LookupError("Relic not found in current relics Inventory.")
-                if not relic_entry.is_relic:
+                if relic_entry.is_relic:
                     real_id = relic_entry.state.real_item_id
                     # Check relic type match
                     is_deep_relic = RelicChecker.is_deep_relic(real_id)
