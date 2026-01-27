@@ -208,6 +208,7 @@ class InventoryHandler:
                 if entry.is_relic:
                     entry.link_state(self.states[state_ga_to_index[entry.ga_handle]])
                     self.relics[entry.ga_handle] = entry
+                    self.relic_gas.append(entry.ga_handle)
 
             count_in_data = struct.unpack_from("<I", globals.data, self.entry_count_offset)[0]
             if self.entry_count != count_in_data:
