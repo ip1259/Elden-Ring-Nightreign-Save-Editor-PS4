@@ -157,12 +157,12 @@ class InventoryHandler:
             if ga_handle in self.strict_invalid_gas:
                 self.strict_invalid_gas.remove(ga_handle)
 
-    def aquire_new_instance_id(self):
+    def request_new_instance_id(self):
         with self._lock:
             self._cur_last_instance_id += 1
             return self._cur_last_instance_id
 
-    def aquire_new_acquisition_id(self):
+    def request_new_acquisition_id(self):
         with self._lock:
             self._cur_last_acquisition_id += 1
             return self._cur_last_acquisition_id
@@ -223,7 +223,7 @@ class InventoryHandler:
         with self._lock:
             logger.info("Adding relic to inventory")
             # Create dummy relic state first
-            dummy_relic = ItemState.create_dummy_relic(self.aquire_new_instance_id(),
+            dummy_relic = ItemState.create_dummy_relic(self.request_new_instance_id(),
                                                        relic_type=relic_type)
             # Replace Item Entry at empty slot
             empty_entry_index = -1
@@ -246,7 +246,7 @@ class InventoryHandler:
                 raise RuntimeError("No empty slot found in inventory states to add relic.")
 
             # Replace Item Entry
-            self.entries[empty_entry_index] = ItemEntry.create_from_state(dummy_relic, self.aquire_new_acquisition_id())
+            self.entries[empty_entry_index] = ItemEntry.create_from_state(dummy_relic, self.request_new_acquisition_id())
             _new_enty_data = self.entries[empty_entry_index].data_bytes
             # Replace entry data
             target_offset = self.entry_offset + empty_entry_index * 14
