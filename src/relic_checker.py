@@ -44,11 +44,8 @@ class RelicChecker:
         set(i for i in range(RELIC_GROUPS['unique_2'][0],
                              RELIC_GROUPS['unique_2'][1] + 1))
 
-    def __init__(self, ga_relic, data_source: SourceDataHandler):
-        self.ga_relic = ga_relic
-        self.data_source = data_source
-        self.illegal_gas = []
-        self.curse_illegal_gas = []  # Track relics illegal due to missing curses
+    def __init__(self):
+        self.data_source = SourceDataHandler()
 
     def check_possible_effects_seq(self, relic_id: int, effects: list[int],
                                    stop_on_valid: bool = False) -> list[tuple[tuple[int, int, int], list[InvalidReason]]]:
@@ -669,77 +666,6 @@ class RelicChecker:
             valid_replacements.append((eff_id, eff_name))
 
         return valid_replacements
-
-    def set_illegal_relics(self):
-        illegal_relics = []
-        curse_illegal_relics = []
-        strict_invalid_relics = []
-        relic_group_by_id = {}
-        for relic in self.ga_relic:
-            ga, relic_id, e1, e2, e3, e4, e5, e6, offset, size = relic
-            real_id = relic_id - 2147483648
-            if str(real_id) not in relic_group_by_id.keys():
-                relic_group_by_id[str(real_id)] = []
-            relic_group_by_id[str(real_id)].append(relic)
-            effects = [e1, e2, e3, e4, e5, e6]
-            invalid_reason = self.check_invalidity(real_id, effects)
-            if invalid_reason != InvalidReason.NONE:
-                illegal_relics.append(ga)
-                # Check if it's specifically curse-illegal
-                if is_curse_invalid(invalid_reason):
-                    curse_illegal_relics.append(ga)
-            elif self.is_strict_invalid(real_id, effects, InvalidReason.NONE):
-                # Valid but has effects with 0 weight in specific pool
-                strict_invalid_relics.append(ga)
-
-        for real_id, relics in relic_group_by_id.items():
-            if int(real_id) in self.UNIQUENESS_IDS:
-                if len(relics) > 1:
-                    legal_found = False
-                    for relic in relics:
-                        (ga, relic_id,
-                         e1, e2, e3, e4, e5, e6,
-                         offset, size) = relic
-                        if ga in illegal_relics:
-                            continue
-                        if not legal_found:
-                            legal_found = True
-                            continue
-                        illegal_relics.append(ga)
-        self.illegal_gas = illegal_relics
-        self.curse_illegal_gas = curse_illegal_relics
-        self.strict_invalid_gas = strict_invalid_relics
-
-    @property
-    def illegal_count(self):
-        return len(self.illegal_gas)
-
-    def append_illegal(self, ga, is_curse_illegal=False):
-        if ga not in self.illegal_gas:
-            self.illegal_gas.append(ga)
-        if is_curse_illegal and ga not in self.curse_illegal_gas:
-            self.curse_illegal_gas.append(ga)
-
-    def remove_illegal(self, ga):
-        if ga in self.illegal_gas:
-            self.illegal_gas.remove(ga)
-        if ga in self.curse_illegal_gas:
-            self.curse_illegal_gas.remove(ga)
-        if ga in self.strict_invalid_gas:
-            self.strict_invalid_gas.remove(ga)
-
-    def update_illegal(self, ga_handle, item_id, source_effects):
-        invalid_reason = self.check_invalidity(item_id, source_effects)
-        if invalid_reason and ga_handle not in self.illegal_gas:
-            self.append_illegal(ga_handle, is_curse_invalid(invalid_reason))
-        elif not invalid_reason and ga_handle in self.illegal_gas:
-            self.remove_illegal(ga_handle)
-        if self.is_strict_invalid(item_id, source_effects, invalid_reason):
-            if ga_handle not in self.strict_invalid_gas:
-                self.strict_invalid_gas.append(ga_handle)
-        else:
-            if ga_handle in self.strict_invalid_gas:
-                self.strict_invalid_gas.remove(ga_handle)
 
     def find_id_range(self, relic_id: int):
         for group_name, group_range in RELIC_GROUPS.items():

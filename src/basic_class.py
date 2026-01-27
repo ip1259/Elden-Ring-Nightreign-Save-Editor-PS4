@@ -96,12 +96,22 @@ class ItemState:
         self.size = 8
 
     @classmethod
-    def create_dummy_relic(cls, instance_id):
+    def create_dummy_relic(cls, instance_id, relic_type: str = "normal"):
+        if relic_type.lower() == "normal":
+            real_item_id = 100
+            item_id = 0x80000000 | (real_item_id & 0x00FFFFFF)
+            dummy_effect_id = 7000000
+        elif relic_type.lower() == "deep":
+            real_item_id = 2003000
+            item_id = 0x80000000 | (real_item_id & 0x00FFFFFF)
+            dummy_effect_id = 7001002
+        else:
+            raise ValueError("Invalid relic type")
         dummy_relic = cls()
         dummy_relic.ga_handle = 0xC0000000 | (instance_id & 0x00FFFFFF)
-        dummy_relic.item_id = 0x80000000 | (100 & 0x00FFFFFF)
+        dummy_relic.item_id = item_id
         dummy_relic.instance_id = instance_id
-        dummy_relic.real_item_id = 100
+        dummy_relic.real_item_id = real_item_id
         dummy_relic.type_bits = ITEM_TYPE_RELIC
         dummy_relic.size = 80
         _padding = bytes([
@@ -112,10 +122,10 @@ class ItemState:
 
         _data: bytearray = bytearray(80)
         struct.pack_into("<I", _data, 0, dummy_relic.ga_handle)  # ga_handle
-        struct.pack_into("<I", _data, 4, dummy_relic.item_id)  # item_id : real_id->100 Delicate Burning Scene
+        struct.pack_into("<I", _data, 4, dummy_relic.item_id)  # item_id : real_id->100 Delicate Burning Scene/id->2003000 Deep Delicate Burning Scene
         struct.pack_into("<I", _data, 8, dummy_relic.item_id)  # durability (same as item_id when item is a relic)
         struct.pack_into("<I", _data, 12, int(0xffffffff))  # unk_1
-        struct.pack_into("<I", _data, 16, int(7000000))  # effect_1: Vigor + 1(id: 7000000)
+        struct.pack_into("<I", _data, 16, int(dummy_effect_id))  # effect_1:Normal-> Vigor + 1(id: 7000000) / Deep -> Poise +3(id:7001002)
         struct.pack_into("<I", _data, 20, int(0xffffffff))  # effect_2
         struct.pack_into("<I", _data, 24, int(0xffffffff))  # effect_3
         _data = _data[:28] + _padding + _data[28+len(_padding):]  # add padding
@@ -291,7 +301,7 @@ class ItemEntry:
     # - 4 bytes: item_quantity, 0xB00003E9 -> GoodsId = 1001, Flask of Crimson Tears Default Quantity is 3
     # - 4 bytes: acquisition ID, Unique, this value does not repeat across all item entries.
     # - 1 byte: bool -> is favorite
-    # - 1 byte: bool -> is sellable, if favorite, unique relic, equipped will be false
+    # - 1 byte: bool -> is salable, if favorite, unique relic, equipped will be false
     def __init__(self, data_bytes: bytearray):
         if len(data_bytes) != 14:
             raise ValueError("Invalid data length")
@@ -301,7 +311,7 @@ class ItemEntry:
         self.item_amount = struct.unpack_from("<I", data_bytes, 4)[0]
         self.acquisition_id = struct.unpack_from("<I", data_bytes, 8)[0]
         self.is_favorite = bool(data_bytes[12])
-        self.is_sellable = bool(data_bytes[13])
+        self.is_salable = bool(data_bytes[13])
         self.state: ItemState = None
 
     @classmethod
@@ -312,7 +322,7 @@ class ItemEntry:
         entry.item_amount = 1
         entry.acquisition_id = acquisition_id
         entry.is_favorite = True
-        entry.is_sellable = False
+        entry.is_salable = False
         return entry
 
     @property
@@ -322,7 +332,7 @@ class ItemEntry:
         struct.pack_into("<I", _data, 4, self.item_amount)
         struct.pack_into("<I", _data, 8, self.acquisition_id)
         _data[12] = int(self.is_favorite)
-        _data[13] = int(self.is_sellable)
+        _data[13] = int(self.is_salable)
         return _data
 
     @property
@@ -333,7 +343,7 @@ class ItemEntry:
         self.state = state
 
     def __repr__(self):
-        return f"ItemEntry(ga_handle=0x{self.ga_handle:08X}, item_id={self.item_id}, item_amount={self.item_amount}, acquisition_id={self.acquisition_id}, is_favorite={self.is_favorite}, is_sellable={self.is_sellable})"
+        return f"ItemEntry(ga_handle=0x{self.ga_handle:08X}, item_id={self.item_id}, item_amount={self.item_amount}, acquisition_id={self.acquisition_id}, is_favorite={self.is_favorite}, is_sellable={self.is_salable})"
 
 
 class AttachEffect:
@@ -390,6 +400,11 @@ class Relic:
         self._is_empty_id = relic_id == 0x00000000
         self._is_unknown = self._relic_df.empty and not self._is_empty_id
         self.id = relic_id
+
+    def is_deep(self):
+        if self._is_empty_id or self._is_unknown:
+            return False
+        return self._relic_df["isDeepRelic"].values[0] == 1
 
     @property
     def name(self):

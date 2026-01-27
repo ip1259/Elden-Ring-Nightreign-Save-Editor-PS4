@@ -2,6 +2,7 @@ import pandas as pd
 import pathlib
 from typing import Optional, Union
 import locale
+import threading
 
 from globals import COLOR_MAP, LANGUAGE_MAP, CHARACTER_NAME_ID, CHARACTER_NAMES, RELIC_GROUPS
 from basic_class import AttachEffect, Relic, Vessel
@@ -49,6 +50,10 @@ def df_filter_zero_chanceWeight(effects: pd.DataFrame) -> pd.DataFrame:
 
 
 class SourceDataHandler:
+    _instance = None
+    _initialized = False
+    _lock = threading.Lock()
+
     WORKING_DIR = pathlib.Path(__file__).parent.resolve()
     PARAM_DIR = pathlib.Path(WORKING_DIR / "Resources/Param")
     TEXT_DIR = pathlib.Path(WORKING_DIR / "Resources/Text")
@@ -67,51 +72,63 @@ class SourceDataHandler:
     ]
     character_names = CHARACTER_NAMES
 
-    def __init__(self, language: str = "en_US"):
-        self._effect_params = \
-            pd.read_csv(self.PARAM_DIR / "AttachEffectParam.csv")
-        self._effect_params: pd.DataFrame = self._effect_params[
-            ["ID", "compatibilityId", "attachTextId", "overrideEffectId"]
-        ]
-        self._effect_params.set_index("ID", inplace=True)
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(SourceDataHandler, cls).__new__(cls)
+        return cls._instance
 
-        self.effect_table = \
-            pd.read_csv(self.PARAM_DIR / "AttachEffectTableParam.csv")
-        self.effect_table: pd.DataFrame = \
-            self.effect_table[["ID", "attachEffectId", "chanceWeight", "chanceWeight_dlc"]]
-
-        self._relic_table = \
-            pd.read_csv(self.PARAM_DIR / "EquipParamAntique.csv")
-        self._relic_table: pd.DataFrame = self._relic_table[
-            [
-                "ID",
-                "relicColor",
-                "attachEffectTableId_1",
-                "attachEffectTableId_2",
-                "attachEffectTableId_3",
-                "attachEffectTableId_curse1",
-                "attachEffectTableId_curse2",
-                "attachEffectTableId_curse3",
+    def __init__(self, language: str = get_system_language()):
+        if self._initialized:
+            return
+        with self._lock:
+            self._initialized = True
+            self._effect_params = \
+                pd.read_csv(self.PARAM_DIR / "AttachEffectParam.csv")
+            self._effect_params: pd.DataFrame = self._effect_params[
+                ["ID", "compatibilityId", "attachTextId", "overrideEffectId"]
             ]
-        ]
-        self._relic_table.set_index("ID", inplace=True)
+            self._effect_params.set_index("ID", inplace=True)
 
-        self.antique_stand_param: pd.DataFrame = \
-            pd.read_csv(self.PARAM_DIR / "AntiqueStandParam.csv")
+            self.effect_table = \
+                pd.read_csv(self.PARAM_DIR / "AttachEffectTableParam.csv")
+            self.effect_table: pd.DataFrame = \
+                self.effect_table[["ID", "attachEffectId", "chanceWeight", "chanceWeight_dlc"]]
 
-        self.relic_name: Optional[pd.DataFrame] = None
-        self.effect_name: Optional[pd.DataFrame] = None
-        self.npc_name: Optional[pd.DataFrame] = None
-        # Track which relic IDs are from 1.03 patch (Scene relics)
-        self._scene_relic_ids: set = set()
-        self.vessel_names: Optional[pd.DataFrame] = None
-        self._load_text(language)
-        self.effects: dict[int, AttachEffect] = {}
-        self._set_effects()
-        self.relics: dict[int, Relic] = {}
-        self._set_relics()
-        self.vessels: dict[int, Vessel] = {}
-        self._set_vessels()
+            self._relic_table = \
+                pd.read_csv(self.PARAM_DIR / "EquipParamAntique.csv")
+            self._relic_table: pd.DataFrame = self._relic_table[
+                [
+                    "ID",
+                    "relicColor",
+                    "isDeepRelic",
+                    "attachEffectTableId_1",
+                    "attachEffectTableId_2",
+                    "attachEffectTableId_3",
+                    "attachEffectTableId_curse1",
+                    "attachEffectTableId_curse2",
+                    "attachEffectTableId_curse3",
+                ]
+            ]
+            self._relic_table.set_index("ID", inplace=True)
+
+            self.antique_stand_param: pd.DataFrame = \
+                pd.read_csv(self.PARAM_DIR / "AntiqueStandParam.csv")
+
+            self.relic_name: Optional[pd.DataFrame] = None
+            self.effect_name: Optional[pd.DataFrame] = None
+            self.npc_name: Optional[pd.DataFrame] = None
+            # Track which relic IDs are from 1.03 patch (Scene relics)
+            self._scene_relic_ids: set = set()
+            self.vessel_names: Optional[pd.DataFrame] = None
+            self._load_text(language)
+            self.effects: dict[int, AttachEffect] = {}
+            self._set_effects()
+            self.relics: dict[int, Relic] = {}
+            self._set_relics()
+            self.vessels: dict[int, Vessel] = {}
+            self._set_vessels()
 
     def _load_text(self, language: str = "en_US"):
         support_languages = LANGUAGE_MAP.keys()
