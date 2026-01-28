@@ -2224,8 +2224,7 @@ class SaveEditorGUI:
                 relic_list_title.config(text=f"Available {slot_type} Relics (All Colors)")
 
             filtered = []
-            ga_hero_map = self.loadout_handler.relic_ga_hero_map
-            hero_type =self.vessel_char_combo.current()+1
+            hero_type = self.vessel_char_combo.current()+1
             for relic in all_relics:
                 # Filter by deep/normal based on selected slot
                 if is_deep_slot and not relic['is_deep']:
@@ -2236,15 +2235,16 @@ class SaveEditorGUI:
                 if relic['ga_handle'] in ga_handles:
                     continue  # Ignore relic in this preset
                 # Filter by Equipped state
+                eqipped_hero_types = self.inventory_handler.get_relic_equipped_by(relic['ga_handle'])
                 match equipped_by_str:
                     case 'None':
-                        if len(ga_hero_map.get(relic['ga_handle'], [])) != 0:
+                        if len(eqipped_hero_types) != 0:
                             continue
                     case 'Other Characters':
-                        if hero_type in ga_hero_map.get(relic['ga_handle'], []) or not ga_hero_map.get(relic['ga_handle'], []):
+                        if hero_type in eqipped_hero_types or not eqipped_hero_types:
                             continue
                     case 'This Character':
-                        if hero_type not in ga_hero_map.get(relic['ga_handle'], []) or not ga_hero_map.get(relic['ga_handle'], []):
+                        if hero_type not in eqipped_hero_types or not eqipped_hero_types:
                             continue
                     case 'All':
                         pass
@@ -2916,7 +2916,6 @@ class SaveEditorGUI:
         search_lower = search_term.lower()
 
         # Get relics from inventory that match criteria
-        ga_hero_map = self.loadout_handler.relic_ga_hero_map
         for ga in self.inventory_handler.relic_gas:
             relic = self.inventory_handler.relics[ga]
             real_id = relic.state.real_item_id
@@ -2943,15 +2942,16 @@ class SaveEditorGUI:
                 continue  # Normal slots need normal relics
             hero_type = self.vessel_char_combo.current() + 1
             # Filter by Equipped state
+            equipped_hero_types = self.inventory_handler.get_relic_equipped_by(ga)
             match equipped_by:
                 case 'None':
-                    if len(ga_hero_map.get(ga, [])) != 0:
+                    if equipped_hero_types != 0:
                         continue
                 case 'Other Characters':
-                    if hero_type in ga_hero_map.get(ga, []) or not ga_hero_map.get(ga, []):
+                    if hero_type in equipped_hero_types or not equipped_hero_types:
                         continue
                 case 'This Character':
-                    if hero_type not in ga_hero_map.get(ga, []) or not ga_hero_map.get(ga, []):
+                    if hero_type not in equipped_hero_types or not equipped_hero_types:
                         continue
                 case 'All':
                     pass
@@ -3498,7 +3498,6 @@ class SaveEditorGUI:
             # Parse items
             self.inventory_handler = InventoryHandler()
             self.inventory_handler.parse()
-            self.inventory_handler.debug_relic_print()
 
             # Parse Vessels and Presets
             self.loadout_handler = LoadoutHandler()
@@ -3642,7 +3641,7 @@ class SaveEditorGUI:
             is_strict_invalid = self.inventory_handler and ga in self.inventory_handler.strict_invalid_gas
 
             # Get character assignment (which characters have this relic equipped)
-            equipped_by_hero_type = self.loadout_handler.relic_ga_hero_map.get(ga, [])
+            equipped_by_hero_type = self.inventory_handler.get_relic_equipped_by(ga)
             equipped_by = [self.game_data.character_names[h_t-1] for h_t in equipped_by_hero_type]
             equipped_by_str = ", ".join(equipped_by) if equipped_by else "-"
 
@@ -5605,8 +5604,7 @@ class ModifyRelicDialog:
         target_color_name = color_names.get(target_color, "Unknown")
 
         # Guard: Check if relic is assigned to a character or preset
-        loadout_handler = LoadoutHandler()
-        assigned_to_hero_type = loadout_handler.relic_ga_hero_map.get(self.ga_handle, [])
+        assigned_to_hero_type = self.inventory.get_relic_equipped_by(self.ga_handle)
         assigned_to = [self.game_data.character_names[h_t-1] for h_t in assigned_to_hero_type]
         if assigned_to:
             messagebox.showwarning(

@@ -3,8 +3,7 @@ import re
 from copy import deepcopy
 from source_data_handler import SourceDataHandler
 from relic_checker import RelicChecker
-from inventory_handler import InventoryHandler
-from basic_class import ItemEntry
+from inventory_handler import InventoryHandler, ItemEntry
 import globals
 from globals import ITEM_TYPE_RELIC, COLOR_MAP, get_now_timestamp
 
@@ -53,6 +52,7 @@ class VesselParser:
 
     def __init__(self):
         self.game_data = SourceDataHandler()  # Singleton
+        self.inventory = InventoryHandler()  # Singleton
         self.heroes: dict[int, HeroLoadout] = {}
         self.relic_ga_hero_map = {}
         self.base_offset = None
@@ -60,6 +60,7 @@ class VesselParser:
     def parse(self):
         heroes = {}
         self.relic_ga_hero_map = {}
+        self.inventory.reset_equipped_records()
         self.base_offset = None
         magic_pattern = re.escape(bytes.fromhex("C2000300002C000003000A0004004600"))
         marker = re.escape(bytes.fromhex("64000000"))
@@ -106,6 +107,7 @@ class VesselParser:
                         if r not in self.relic_ga_hero_map:
                             self.relic_ga_hero_map[r] = set()
                         self.relic_ga_hero_map[r].add(hero_type)
+                        self.inventory.relics[r].equip(hero_type)
                 universal_vessels.append({
                     "vessel_id": v_id,
                     "relics": relics,
@@ -456,6 +458,9 @@ class LoadoutHandler:
 
     @property
     def relic_ga_hero_map(self):
+        """
+            Don't use this, use get_relic_equipped_by method in InventoryHandler instead
+        """
         return self.parser.relic_ga_hero_map
 
     def get_vessel_index_in_hero(self, hero_type: int, vessel_id: int):
@@ -591,9 +596,16 @@ class LoadoutHandler:
                 break
         if not _new_vessel:
             raise ValueError("Vessel not found")
+        old_relic_ga = _new_vessel["relics"][relic_index]
         _new_vessel["relics"][relic_index] = new_relic_ga
         if self.validator.validate_vessel(self.heroes, hero_type, _new_vessel):
             self.heroes[hero_type].vessels[vessel_index] = _new_vessel
+            # Record relic equip/unequip
+            if old_relic_ga != 0:
+                self.inventory.relics[old_relic_ga].unequip(hero_type)
+            if new_relic_ga != 0:
+                self.inventory.relics[new_relic_ga].equip(hero_type)
+
             if self.heroes[hero_type].cur_vessel_id == vessel_id:
                 self.validator.auto_adjust_cur_equipment(self.heroes, hero_type)
             self.update_hero_loadout(hero_type)
@@ -616,6 +628,7 @@ class LoadoutHandler:
             _new_preset = deepcopy(self.all_presets[preset_index])
         elif hero_preset_index >= 0:
             _new_preset = deepcopy(self.heroes[hero_type].presets[hero_preset_index])
+        old_relic_ga = _new_preset["relics"][relic_index]
         _new_preset["relics"][relic_index] = new_relic_ga
         _t_vessel = {"vessel_id": _new_preset["vessel_id"], "relics": _new_preset['relics']}
         self.validator.validate_vessel(self.heroes, hero_type, _t_vessel)
@@ -623,5 +636,11 @@ class LoadoutHandler:
             self.all_presets[preset_index]['relics'][relic_index] = new_relic_ga
         elif hero_preset_index >= 0:
             self.heroes[hero_type].presets[hero_preset_index]['relics'][relic_index] = new_relic_ga
+        # Record relic equip/unequip
+        if old_relic_ga != 0:
+            self.inventory.relics[old_relic_ga].unequip(hero_type)
+        if new_relic_ga != 0:
+            self.inventory.relics[new_relic_ga].equip(hero_type)
+  
         self.validator.auto_adjust_cur_equipment(self.heroes, hero_type)
         self.update_hero_loadout(hero_type)
