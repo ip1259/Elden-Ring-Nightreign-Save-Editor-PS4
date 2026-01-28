@@ -3501,8 +3501,8 @@ class SaveEditorGUI:
             self.inventory_handler.debug_relic_print()
 
             # Parse Vessels and Presets
-            loadout_handler = LoadoutHandler()
-            loadout_handler.parse()
+            self.loadout_handler = LoadoutHandler()
+            self.loadout_handler.parse()
 
             # Initialize Relic Checker (set_illegal_relics will be called by reload_inventory)
             relic_checker = RelicChecker()

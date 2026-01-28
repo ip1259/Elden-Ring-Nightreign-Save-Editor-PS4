@@ -1,7 +1,8 @@
 import struct
-from basic_class import ItemEntry, ItemState
+from typing import Literal
 from relic_checker import RelicChecker, InvalidReason, is_curse_invalid
 from source_data_handler import SourceDataHandler
+from globals import ITEM_TYPE_RELIC, ITEM_TYPE_WEAPON, ITEM_TYPE_ARMOR
 import globals
 import logging
 import threading
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 def remove_padding_area():
     # Remove 72 bytes from the padding area at the end of the file.
+    # Note: Why 72 Bytes? Because empty Item State use 8 Bytes, And Relic Item State Use 80 Bytes.
     # The save file must maintain a constant size for the game to load it.
     globals.data = globals.data[: -0x1C - 72] + globals.data[-0x1C:]
 
@@ -22,18 +24,295 @@ def insert_padding_area():
     globals.data = globals.data[: -0x1C] + b'\x00' * 72 + globals.data[-0x1C:]
 
 
+class ItemState:
+    BASE_SIZE = 8
+
+    def __init__(self):
+        self.ga_handle = 0
+        self.instance_id = 0
+        self.item_id = 0xffffffff
+        self.real_item_id = 0x00ffffff
+        self.type_bits = 0
+        self.data: bytearray = bytes.fromhex('00000000FFFFFFFF')
+        self.size = 8
+
+    @classmethod
+    def create_dummy_relic(cls, instance_id, relic_type: str = "normal"):
+        if relic_type.lower() == "normal":
+            real_item_id = 100
+            item_id = 0x80000000 | (real_item_id & 0x00FFFFFF)
+            dummy_effect_id = 7000000
+        elif relic_type.lower() == "deep":
+            real_item_id = 2003000
+            item_id = 0x80000000 | (real_item_id & 0x00FFFFFF)
+            dummy_effect_id = 7001002
+        else:
+            raise ValueError("Invalid relic type")
+        dummy_relic = cls()
+        dummy_relic.ga_handle = 0xC0000000 | (instance_id & 0x00FFFFFF)
+        dummy_relic.item_id = item_id
+        dummy_relic.instance_id = instance_id
+        dummy_relic.real_item_id = real_item_id
+        dummy_relic.type_bits = ITEM_TYPE_RELIC
+        dummy_relic.size = 80
+        _padding = bytes([
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF
+        ])
+
+        _data: bytearray = bytearray(80)
+        struct.pack_into("<I", _data, 0, dummy_relic.ga_handle)  # ga_handle
+        struct.pack_into("<I", _data, 4, dummy_relic.item_id)  # item_id : real_id->100 Delicate Burning Scene/id->2003000 Deep Delicate Burning Scene
+        struct.pack_into("<I", _data, 8, dummy_relic.item_id)  # durability (same as item_id when item is a relic)
+        struct.pack_into("<I", _data, 12, int(0xffffffff))  # unk_1
+        struct.pack_into("<I", _data, 16, int(dummy_effect_id))  # effect_1:Normal-> Vigor + 1(id: 7000000) / Deep -> Poise +3(id:7001002)
+        struct.pack_into("<I", _data, 20, int(0xffffffff))  # effect_2
+        struct.pack_into("<I", _data, 24, int(0xffffffff))  # effect_3
+        _data = _data[:28] + _padding + _data[28+len(_padding):]  # add padding
+        struct.pack_into("<I", _data, 56, int(0xffffffff))  # curse_1
+        struct.pack_into("<I", _data, 60, int(0xffffffff))  # curse_2
+        struct.pack_into("<I", _data, 64, int(0xffffffff))  # curse_3
+        struct.pack_into("<I", _data, 68, int(0xffffffff))  # unk_2
+        struct.pack_into("<Q", _data, 72, int(0))  # 8 bytes end_padding
+
+        dummy_relic.data = _data
+        return dummy_relic
+
+    def from_bytes(self, user_data: bytearray, offset=0):
+        data_len = len(user_data)
+
+        # Check if we have enough data for the base read
+        if offset + self.BASE_SIZE > data_len:
+            raise ValueError("Invalid data length. Save File may be corrupted.")
+
+        self.ga_handle, self.item_id = struct.unpack_from("<II", user_data, offset)
+        self.type_bits = self.ga_handle & 0xF0000000
+        self.instance_id = self.ga_handle & 0x00FFFFFF
+        self.real_item_id = self.item_id & 0x00FFFFFF
+        cursor = offset
+
+        if self.ga_handle != 0:
+            if self.type_bits == ITEM_TYPE_WEAPON:
+                if cursor + 88 > data_len:
+                    raise ValueError("Invalid data length. Save File may be corrupted.")
+                self.size = 88
+                self.data = user_data[cursor:cursor+self.size]
+            elif self.type_bits == ITEM_TYPE_ARMOR:
+                if cursor + 16 > data_len:
+                    raise ValueError("Invalid data length. Save File may be corrupted.")
+                self.size = 16
+                self.data = user_data[cursor:cursor+self.size]
+            elif self.type_bits == ITEM_TYPE_RELIC:
+                if cursor + 80 > data_len:
+                    raise ValueError("Invalid data length. Save File may be corrupted.")
+                self.size = 80
+                self.data = user_data[cursor:cursor+self.size]
+
+    def set_real_id(self, real_id):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Real ID can only be set for relics")
+        self.real_item_id = real_id
+        self.item_id = self.real_item_id | 0x80000000
+        struct.pack_into("<I", self.data, 4, self.item_id)
+        self.durability = self.item_id
+
+    @property
+    def durability(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 8)[0]
+
+    @durability.setter
+    def durability(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Durability can only be set for relics")
+        struct.pack_into("<I", self.data, 8, value)
+
+    @property
+    def unk_1(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 12)[0]
+
+    @unk_1.setter
+    def unk_1(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Unk_1 can only be set for relics")
+        struct.pack_into("<I", self.data, 12, value)
+
+    @property
+    def effect_1(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 16)[0]
+
+    @effect_1.setter
+    def effect_1(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Effect_1 can only be set for relics")
+        struct.pack_into("<I", self.data, 16, value)
+
+    @property
+    def effect_2(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 20)[0]
+
+    @effect_2.setter
+    def effect_2(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Effect_2 can only be set for relics")
+        struct.pack_into("<I", self.data, 20, value)
+
+    @property
+    def effect_3(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 24)[0]
+
+    @effect_3.setter
+    def effect_3(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Effect_3 can only be set for relics")
+        struct.pack_into("<I", self.data, 24, value)
+
+    @property
+    def curse_1(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 56)[0]
+
+    @curse_1.setter
+    def curse_1(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Curse_1 can only be set for relics")
+        struct.pack_into("<I", self.data, 56, value)
+
+    @property
+    def curse_2(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 60)[0]
+
+    @curse_2.setter
+    def curse_2(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Curse_2 can only be set for relics")
+        struct.pack_into("<I", self.data, 60, value)
+
+    @property
+    def curse_3(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 64)[0]
+
+    @curse_3.setter
+    def curse_3(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Curse_3 can only be set for relics")
+        struct.pack_into("<I", self.data, 64, value)
+
+    @property
+    def unk_2(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return struct.unpack_from("<I", self.data, 68)[0]
+
+    @unk_2.setter
+    def unk_2(self, value):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            raise TypeError("Unk_2 can only be set for relics")
+        struct.pack_into("<I", self.data, 68, value)
+
+    @property
+    def effects_and_curses(self):
+        if self.type_bits != ITEM_TYPE_RELIC:
+            return None
+        return [self.effect_1, self.effect_2, self.effect_3, self.curse_1, self.curse_2, self.curse_3]
+
+    def __repr__(self):
+        return f"ItemState(ga_handle=0x{self.ga_handle:08X}, item_id=0x{self.item_id:08X}, instance_id={self.instance_id}, real_item_id={self.real_item_id}, type_bits=0x{self.type_bits:08X}, size={self.size})"
+
+
+class ItemEntry:
+    # Item Entries Section Structure In user_data
+    # First 4 bytes: Item count
+    # Followed by ItemEntry structures (Base size 14 bytes):
+    # - 4 bytes: ga_handle, Composite LE (Byte 0: Type 0xB0=Goods, 0xC0=Relics etc. Bytes 1-3: ID)
+    # - 4 bytes: item_quantity, 0xB00003E9 -> GoodsId = 1001, Flask of Crimson Tears Default Quantity is 3
+    # - 4 bytes: acquisition ID, Unique, this value does not repeat across all item entries.
+    # - 1 byte: bool -> is favorite
+    # - 1 byte: bool -> is salable, if favorite, unique relic, equipped will be false
+    # Note Last bytes may not salable， New Guess is 'is_new'
+    def __init__(self, data_bytes: bytearray):
+        if len(data_bytes) != 14:
+            raise ValueError("Invalid data length")
+        self.ga_handle = struct.unpack_from("<I", data_bytes, 0)[0]  # Combination of ItemType and Instance ID
+        self.type_bits = self.ga_handle & 0xF0000000
+        self.instance_id = self.ga_handle & 0x00FFFFFF  # Tpye 'Goods' instance id is equal to goodsId
+        self.item_amount = struct.unpack_from("<I", data_bytes, 4)[0]
+        self.acquisition_id = struct.unpack_from("<I", data_bytes, 8)[0]
+        self.is_favorite = bool(data_bytes[12])
+        self.is_salable = bool(data_bytes[13])
+        self.state: ItemState = None
+        self.equipped_by: list[int] = [0] * 10
+
+    @classmethod
+    def create_from_state(cls, state: ItemState, acquisition_id: int):
+        entry = cls(bytearray(14))
+        entry.ga_handle = state.ga_handle
+        entry.instance_id = state.item_id
+        entry.item_amount = 1
+        entry.acquisition_id = acquisition_id
+        entry.is_favorite = True
+        entry.is_salable = False
+        return entry
+
+    @property
+    def data_bytes(self):
+        _data = bytearray(14)
+        struct.pack_into("<I", _data, 0, self.ga_handle)
+        struct.pack_into("<I", _data, 4, self.item_amount)
+        struct.pack_into("<I", _data, 8, self.acquisition_id)
+        _data[12] = int(self.is_favorite)
+        _data[13] = int(self.is_salable)
+        return _data
+
+    @property
+    def is_relic(self):
+        return self.type_bits == ITEM_TYPE_RELIC
+
+    def link_state(self, state: ItemState):
+        self.state = state
+
+    def equip(self, hero_type: Literal[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
+        self.equipped_by[hero_type-1] += 1
+        self.is_salable = False
+
+    def unequip(self, hero_type: Literal[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]):
+        game_data = SourceDataHandler()
+        self.equipped_by[hero_type-1] -= 1
+        self.is_salable = all([game_data.relics[self.state.real_item_id].is_salable(),
+                               sum(self.equipped_by) == 0, not self.is_favorite])
+
+    def __repr__(self):
+        return f"ItemEntry(ga_handle=0x{self.ga_handle:08X}, item_id={self.instance_id}, item_amount={self.item_amount}, acquisition_id={self.acquisition_id}, is_favorite={self.is_favorite}, is_sellable={self.is_salable})"
+
+
 class InventoryHandler:
     _instance = None
     _lock = threading.RLock()
     _parse_lock = threading.Lock()
     _initialized = False
 
-    START_OFFEST = 0x14
-    STATE_SLOT_COUNT = 5120
-    ENTRY_SLOT_COUNT = 3065
-    STATE_SLOT_KEEP_COUNT = 84
+    START_OFFEST = 0x14  # Item State Datas start at offset 0x14
+    STATE_SLOT_COUNT = 5120  # MAX slots count of Item States
+    ENTRY_SLOT_COUNT = 3065  # MAX slots count of Item Entries
+    STATE_SLOT_KEEP_COUNT = 84  # Item State slots are Empty from 0 to 83
 
     def __new__(cls):
+        # Singleton Pattern
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -50,6 +329,15 @@ class InventoryHandler:
             self.initialize()
 
     def initialize(self):
+        """
+        Initializes the InventoryHandler instance.
+            This is called before the inventory parse.
+            Excludes illegal_gas, curse_illegal_gas, and strict_invalid_gas.
+            These should be initialized only once in __init__ or
+            reset with set_illegal_relics.
+
+        :param self: 說明
+        """
         self._initialized = True
         self.states: list[ItemState] = []
         self.entries: list[ItemEntry] = []
@@ -200,8 +488,8 @@ class InventoryHandler:
             for i in range(self.ENTRY_SLOT_COUNT):
                 entry = ItemEntry(globals.data[cur_offset:cur_offset+14])
                 self.entries.append(entry)
-                if entry.item_id in range(9600, 9957):
-                    self.vessels.append(entry.item_id)
+                if entry.instance_id in range(9600, 9957):
+                    self.vessels.append(entry.instance_id)
                 cur_offset += 14
                 if entry.ga_handle != 0:
                     self.entry_count += 1
@@ -218,6 +506,11 @@ class InventoryHandler:
                 logger.warning("Trying to fix it...")
                 logger.info("Updating entry count in")
                 struct.pack_into("<I", globals.data, self.entry_count_offset, self.entry_count)
+
+    def update_entry_data(self, entry_index):
+        target_offset = self.entry_offset + entry_index * 14
+        globals.data = globals.data[:target_offset] + self.entries[entry_index].data_bytes + globals.data[target_offset + 14:]
+        self.parse()  # Just make sure everything is fine
 
     def add_relic_to_inventory(self, relic_type: str = "normal"):
         with self._lock:
@@ -406,3 +699,15 @@ class InventoryHandler:
             relic_effects = entry.state.effects_and_curses
             relic_effects_names = [game_data.effects[effect].name for effect in relic_effects]
             logger.debug(f"Relic GA: 0x{ga_handle:X}, ID: {relic_id}, Name: {relic_name}, Effects/Curses: {relic_effects_names}")
+
+    def debug_check_salable_state(self):
+        game_data = SourceDataHandler()  # Singleton
+        sorted_entries = [entry for entry in self.relics.values()]
+        sorted_entries.sort(key=lambda x: x.acquisition_id)
+        for idx, entry in enumerate(sorted_entries):
+            ga_handle = entry.ga_handle
+            theory_salable = all([game_data.relics[entry.state.real_item_id].is_salable(),
+                                  sum(entry.equipped_by) == 0, not entry.is_favorite])
+            compare_result = "Correct" if theory_salable == entry.is_salable else "Incorrect"
+            if theory_salable != entry.is_salable:
+                logger.debug(f"#{idx+1} {compare_result}, Relic GA: 0x{ga_handle:X}, Salable: {entry.is_salable}, Theory: {theory_salable}, Data: {entry.data_bytes.hex()}")
