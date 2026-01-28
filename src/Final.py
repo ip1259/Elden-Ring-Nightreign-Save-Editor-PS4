@@ -6012,7 +6012,7 @@ class SearchDialog:
                 item_str = f"{name} (effects: {relic_slot[0]}, curses:{relic_slot[1]})"
             self.all_items.append((str(item_id), item_str))
         
-        self.all_items.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 0)
+        # self.all_items.sort(key=lambda x: int(x[0]) if x[0].isdigit() else 0)
         self.filter_results()
         
         # Buttons
