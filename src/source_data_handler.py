@@ -3,25 +3,34 @@ import pathlib
 from typing import Optional, Union
 import locale
 import threading
+import logging
 
 from globals import COLOR_MAP, LANGUAGE_MAP, CHARACTER_NAME_ID, CHARACTER_NAMES, RELIC_GROUPS
 
 
+logger = logging.getLogger(__name__)
+
+
 def get_system_language():
+    logger.info("Getting system language...")
     lang = None
 
     try:
         lang, _ = locale.getdefaultlocale()
     except Exception:
+        logger.warning("Failed to get system language. Return Default: en_US")
         return "en_US"
 
     if lang:
+        logger.info(f"System language: {lang}")
         normalized = locale.normalize(lang)
         clean_lang = normalized.split('.')[0]
         clean_lang = clean_lang.replace('-', '_')
         if clean_lang in LANGUAGE_MAP:
+            logger.info(f"Cleaned language: {clean_lang}")
             return clean_lang
         else:
+            logger.warning(f"Unsupport language: {clean_lang}. Return Default: en_US")
             return "en_US"
     return "en_US"
 
@@ -308,73 +317,90 @@ class SourceDataHandler:
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
+            logger.info("Creating SourceDataHandler instance...")
+            logger.info("Trying to get lock...")
             with cls._lock:
+                logger.info("Got lock! Checking instance again...")
                 if cls._instance is None:
+                    logger.info("Creating new instance...")
                     cls._instance = super(SourceDataHandler, cls).__new__(cls)
         return cls._instance
 
     def __init__(self, language: str = get_system_language()):
         if self._initialized:
+            logger.info("SourceDataHandler already initialized. Returning...")
             return
+        logger.info("Initializing SourceDataHandler...")
+        logger.info("Trying to get lock...")
         with self._lock:
-            self._initialized = True
-            self._effect_params = \
-                pd.read_csv(self.PARAM_DIR / "AttachEffectParam.csv")
-            self._effect_params: pd.DataFrame = self._effect_params[
-                ["ID", "compatibilityId", "attachTextId", "overrideEffectId"]
-            ]
-            self._effect_params.set_index("ID", inplace=True)
-
-            self.effect_table = \
-                pd.read_csv(self.PARAM_DIR / "AttachEffectTableParam.csv")
-            self.effect_table: pd.DataFrame = \
-                self.effect_table[["ID", "attachEffectId", "chanceWeight", "chanceWeight_dlc"]]
-
-            self._relic_table = \
-                pd.read_csv(self.PARAM_DIR / "EquipParamAntique.csv")
-            self._relic_table: pd.DataFrame = self._relic_table[
-                [
-                    "ID",
-                    "relicColor",
-                    "isDeepRelic",
-                    "isSalable",
-                    "attachEffectTableId_1",
-                    "attachEffectTableId_2",
-                    "attachEffectTableId_3",
-                    "attachEffectTableId_curse1",
-                    "attachEffectTableId_curse2",
-                    "attachEffectTableId_curse3",
+            logger.info("Got lock! Checking is instance initialized again...")
+            if not self._initialized:
+                logger.info("Initializing SourceDataHandler...")
+                self._initialized = True
+                logger.info("Loading Effects Parameter Files...")
+                self._effect_params = \
+                    pd.read_csv(self.PARAM_DIR / "AttachEffectParam.csv")
+                self._effect_params: pd.DataFrame = self._effect_params[
+                    ["ID", "compatibilityId", "attachTextId", "overrideEffectId"]
                 ]
-            ]
-            self._relic_table.set_index("ID", inplace=True)
+                self._effect_params.set_index("ID", inplace=True)
 
-            self.antique_stand_param: pd.DataFrame = \
-                pd.read_csv(self.PARAM_DIR / "AntiqueStandParam.csv")
+                logger.info("Loading AttachEffectTable Parameter Files...")
+                self.effect_table = \
+                    pd.read_csv(self.PARAM_DIR / "AttachEffectTableParam.csv")
+                self.effect_table: pd.DataFrame = \
+                    self.effect_table[["ID", "attachEffectId", "chanceWeight", "chanceWeight_dlc"]]
 
-            self.relic_name: Optional[pd.DataFrame] = None
-            self.effect_name: Optional[pd.DataFrame] = None
-            self.npc_name: Optional[pd.DataFrame] = None
-            # Track which relic IDs are from 1.03 patch (Scene relics)
-            self._scene_relic_ids: set = set()
-            self.vessel_names: Optional[pd.DataFrame] = None
-            self._load_text(language)
-            self.effects: dict[int, AttachEffect] = {}
-            self._set_effects()
-            self.relics: dict[int, Relic] = {}
-            self._set_relics()
-            self.vessels: dict[int, Vessel] = {}
-            self._set_vessels()
+                logger.info("Loading Antique(Relic) Parameter Files...")
+                self._relic_table = \
+                    pd.read_csv(self.PARAM_DIR / "EquipParamAntique.csv")
+                self._relic_table: pd.DataFrame = self._relic_table[
+                    [
+                        "ID",
+                        "relicColor",
+                        "isDeepRelic",
+                        "isSalable",
+                        "attachEffectTableId_1",
+                        "attachEffectTableId_2",
+                        "attachEffectTableId_3",
+                        "attachEffectTableId_curse1",
+                        "attachEffectTableId_curse2",
+                        "attachEffectTableId_curse3",
+                    ]
+                ]
+                self._relic_table.set_index("ID", inplace=True)
+
+                logger.info("Loading AntiqueStand Parameter Files...")
+                self.antique_stand_param: pd.DataFrame = \
+                    pd.read_csv(self.PARAM_DIR / "AntiqueStandParam.csv")
+
+                self.relic_name: Optional[pd.DataFrame] = None
+                self.effect_name: Optional[pd.DataFrame] = None
+                self.npc_name: Optional[pd.DataFrame] = None
+                # Track which relic IDs are from 1.03 patch (Scene relics)
+                self._scene_relic_ids: set = set()
+                self.vessel_names: Optional[pd.DataFrame] = None
+                self._load_text(language)
+                self.effects: dict[int, AttachEffect] = {}
+                self._set_effects()
+                self.relics: dict[int, Relic] = {}
+                self._set_relics()
+                self.vessels: dict[int, Vessel] = {}
+                self._set_vessels()
 
     def _load_text(self, language: str = "en_US"):
+        logger.info(f"Loading text for language: {language}")
         support_languages = LANGUAGE_MAP.keys()
         _lng = language
         if language not in support_languages:
+            logger.warning(f"{language} is not supported. Falling back to default 'en_US'.")
             _lng = "en_US"
         # Deal with Relic text
         # Read all Relic xml from language subfolder
         # Track which IDs come from _dlc01 file (1.03 patch / Scene relics)
         _relic_names: Optional[pd.DataFrame] = None
         self._scene_relic_ids = set()
+        logger.info("Loading Relic text...")
         for file_name in SourceDataHandler.RELIC_TEXT_FILE_NAME:
             _df = pd.read_xml(
                 SourceDataHandler.TEXT_DIR / _lng / file_name,
@@ -391,6 +417,7 @@ class SourceDataHandler:
 
         # Deal with Effect text
         # Read all Effect xml from language subfolder
+        logger.info("Loading Effect text...")
         _effect_names: Optional[pd.DataFrame] = None
         for file_name in SourceDataHandler.EFFECT_NAME_FILE_NAMES:
             _df = pd.read_xml(
@@ -404,6 +431,7 @@ class SourceDataHandler:
 
         # Deal with NPC text
         # Read all NPC xml from language subfolder
+        logger.info("Loading NPC text...")
         _npc_names: Optional[pd.DataFrame] = None
         for file_name in SourceDataHandler.NPC_NAME_FILE_NAMES:
             _df = pd.read_xml(
@@ -422,6 +450,7 @@ class SourceDataHandler:
 
         # Deal with Goods Names
         # Read all Goods xml from language subfolder
+        logger.info("Loading Goods text...")
         _goods_names: Optional[pd.DataFrame] = None
         for file_name in SourceDataHandler.GOODS_NAME_FILE_NAMES:
             _df = pd.read_xml(
@@ -436,6 +465,7 @@ class SourceDataHandler:
         _vessel_names = _goods_names[(9600 <= _goods_names["id"]) &
                                      (_goods_names["id"] <= 9956) &
                                      (_goods_names["text"] != "%null%")]
+        logger.info("Setting Vessel Names...")
         if self.vessel_names is None:
             self.vessel_names = _vessel_names
         else:
@@ -443,6 +473,7 @@ class SourceDataHandler:
             self.vessel_names.set_index('id')
             self.vessel_names.update(_vessel_names)
             self.vessel_names.reset_index()
+        logger.info("Setting NPC Names...")
         if self.npc_name is None:
             self.npc_name = _npc_names
         else:
@@ -450,6 +481,7 @@ class SourceDataHandler:
             _npc_names.set_index('id')
             self.npc_name.update(_npc_names)
             self.npc_name.reset_index()
+        logger.info("Setting Relic Names...")
         if self.relic_name is None:
             self.relic_name = _relic_names
         else:
@@ -457,6 +489,7 @@ class SourceDataHandler:
             _relic_names.set_index('id')
             self.relic_name.update(_relic_names)
             self.relic_name.reset_index()
+        logger.info("Setting Effect Names...")
         if self.effect_name is None:
             self.effect_name = _effect_names
         else:
@@ -466,6 +499,7 @@ class SourceDataHandler:
             self.effect_name.reset_index()
 
     def reload_text(self, language: str = "en_US"):
+        logger.info(f"Reloading text for language: {language}")
         try:
             self._load_text(language=language)
             return True
@@ -477,11 +511,14 @@ class SourceDataHandler:
             return False
 
     def _set_effects(self):
+        logger.info("Setting Effects...")
+        logger.info("Setting 'Empty Effect' Data...")
         # Empty effect first
         self.effects[0xffffffff] = AttachEffect(self._effect_params,
                                                 self.effect_name,
                                                 0xffffffff)
         # Iterate through the entire effect param DataFrame
+        logger.info("Setting All Effects Data...")
         for index, row in self._effect_params.iterrows():
             effect_id = index
             self.effects[effect_id] = AttachEffect(self._effect_params,
@@ -489,6 +526,7 @@ class SourceDataHandler:
                                                    effect_id)
 
     def _set_relics(self):
+        logger.info("Setting Relic Data...")
         for index, row in self._relic_table.iterrows():
             relic_id = index
             self.relics[relic_id] = Relic(self._relic_table,
@@ -496,6 +534,7 @@ class SourceDataHandler:
                                           relic_id)
 
     def _set_vessels(self):
+        logger.info("Setting Vessel Data...")
         for index, row in self.antique_stand_param.iterrows():
             vessel_id = row["ID"]
             self.vessels[vessel_id] = Vessel(self.antique_stand_param,
@@ -511,94 +550,6 @@ class SourceDataHandler:
 
     def get_support_languages(self):
         return LANGUAGE_MAP
-
-    def get_relic_origin_structure(self):
-        if self.relic_name is None:
-            self._load_text()
-        _copy_df = self.relic_name.copy()
-        _copy_df.set_index("id", inplace=True)
-        _copy_df.rename(columns={"text": "name"}, inplace=True)
-        _result = {}
-        for index, row in self._relic_table.iterrows():
-            try:
-                _name_matches = \
-                    _copy_df[_copy_df.index == index]["name"].values
-                _color_matches = \
-                    self._relic_table[self._relic_table.index == index][
-                        "relicColor"].values
-                first_name_val = \
-                    _name_matches[0] if len(_name_matches) > 0 else "Unset"
-                first_color_val = COLOR_MAP[int(_color_matches[0])] if len(_color_matches) > 0 else "Red"
-                _result[str(index)] = {
-                    "name": str(first_name_val),
-                    "color": first_color_val,
-                }
-            except KeyError:
-                _result[str(index)] = {"name": "Unset", "color": "Red"}
-        return _result
-
-    def cvrt_filtered_relic_origin_structure(self,
-                                             relic_dataframe: pd.DataFrame):
-        if self.relic_name is None:
-            self._load_text()
-        _copy_df = self.relic_name.copy()
-        _copy_df.set_index("id", inplace=True)
-        _copy_df.rename(columns={"text": "name"}, inplace=True)
-        _result = {}
-        for index, row in relic_dataframe.iterrows():
-            try:
-                _name_matches = \
-                    _copy_df[_copy_df.index == index]["name"].values
-                _color_matches = \
-                    relic_dataframe[relic_dataframe.index == index][
-                        "relicColor"].values
-                first_name_val = \
-                    _name_matches[0] if len(_name_matches) > 0 else "Unset"
-                first_color_val = COLOR_MAP[int(_color_matches[0])] if len(_color_matches) > 0 else "Red"
-                _result[str(index)] = {
-                    "name": str(first_name_val),
-                    "color": first_color_val,
-                }
-            except KeyError:
-                _result[str(index)] = {"name": "Unset", "color": "Red"}
-        return _result
-
-    def get_effect_origin_structure(self):
-        if self.effect_name is None:
-            self._load_text()
-        _copy_df = self.effect_name.copy()
-        _copy_df.set_index("id", inplace=True)
-        _reslut = {"4294967295": {"name": "Empty"}}
-        for index, row in self._effect_params.iterrows():
-            try:
-                _attachTextId = self._effect_params.loc[index, "attachTextId"]
-                matches = \
-                    _copy_df[_copy_df.index == _attachTextId]["text"].values
-                first_val = matches[0] if len(matches) > 0 else "Unknown"
-                _reslut[str(index)] = {"name": str(first_val)}
-            except KeyError:
-                _reslut[str(index)] = {"name": "Unknown"}
-        return _reslut
-
-    def cvrt_filtered_effect_origin_structure(self,
-                                              effect_dataframe: pd.DataFrame):
-        if self.effect_name is None:
-            self._load_text()
-        _copy_df = self.effect_name.copy()
-        _copy_df.set_index("id", inplace=True)
-        _reslut = {}
-        for index, row in effect_dataframe.iterrows():
-            try:
-                _attachTextId = effect_dataframe.loc[index, "attachTextId"]
-                matches = \
-                    _copy_df[_copy_df.index == _attachTextId]["text"].values
-                first_val = matches[0] if len(matches) > 0 else "Unknown"
-                _reslut[str(index)] = {"name": str(first_val)}
-            except KeyError:
-                _reslut[str(index)] = {"name": "Unknown"}
-        if len(_reslut) == 0:
-            _reslut = {"4294967295": {"name": "Empty"}}
-        return _reslut
 
     def is_scene_relic(self, relic_id: int) -> bool:
         """Check if a relic is a Scene relic (added in patch 1.03).
@@ -635,6 +586,7 @@ class SourceDataHandler:
             )
 
     def get_pool_effects(self, pool_id: int):
+        logger.info(f"Getting effects for pool {pool_id}")
         if pool_id == -1:
             return []
         _effects = self.effect_table[self.effect_table["ID"] == pool_id]
@@ -652,6 +604,7 @@ class SourceDataHandler:
         rollable weight in ANY of the three deep pools, since the game appears
         to allow effects to roll on any deep relic if they're valid in any deep pool.
         """
+        logger.info(f"Getting rollable effects for pool {pool_id}")
         if pool_id == -1:
             return []
 
@@ -676,6 +629,7 @@ class SourceDataHandler:
         Use this for strict validation to detect effects that are valid in some
         deep pool but not in the specific pool assigned to a relic.
         """
+        logger.info(f"Getting strict effects for pool {pool_id}")
         if pool_id == -1:
             return []
         _effects = self.effect_table[self.effect_table["ID"] == pool_id]
@@ -684,11 +638,13 @@ class SourceDataHandler:
 
     def get_effect_pools(self, effect_id: int):
         """Get all pool IDs that contain a specific effect."""
+        logger.info(f"Getting pools for effect {effect_id}")
         _pools = self.effect_table[self.effect_table["attachEffectId"] == effect_id]
         return _pools["ID"].values.tolist()
 
     def get_effect_rollable_pools(self, effect_id: int):
         """Get all pool IDs where this effect can actually roll (chanceWeight != 0)."""
+        logger.info(f"Getting rollable pools for effect {effect_id}")
         _rows = self.effect_table[self.effect_table["attachEffectId"] == effect_id]
         # Filter out rows where chanceWeight is 0 (cannot roll)
         _rollable = df_filter_zero_chanceWeight(_rows)
@@ -698,6 +654,7 @@ class SourceDataHandler:
         """Check if an effect only exists in deep relic pools (2000000, 2100000, 2200000)
         plus its own dedicated pool (effect_id == pool_id).
         These effects require curses when used on multi-effect relics."""
+        logger.info(f"Checking if effect {effect_id} is deep-only")
         if effect_id in [-1, 0, 4294967295]:
             return False
         pools = self.get_effect_pools(effect_id)
@@ -717,6 +674,7 @@ class SourceDataHandler:
         We check rollable pools (weight != -65536) because an effect may be listed
         in a pool but with weight -65536 meaning it can't actually roll there.
         """
+        logger.info(f"Checking if effect {effect_id} needs a curse")
         if effect_id in [-1, 0, 4294967295]:
             return False
 
@@ -752,6 +710,7 @@ class SourceDataHandler:
         If it does, assign the next available curse pool ID.
         If it doesn't, assign -1.
         """
+        logger.info(f"Getting adjusted pool sequence for relic {relic_id}")
         effs = effects[:3]
         pool_ids = self.relics[relic_id].effect_slots
         curse_pools = pool_ids[3:]
@@ -764,6 +723,7 @@ class SourceDataHandler:
         return new_pool_ids
 
     def get_relic_slot_count(self, relic_id: int) -> tuple[int, int]:
+        logger.info(f"Getting relic slot count for relic {relic_id}")
         pool_seq: list = self.relics[relic_id].effect_slots
         effect_slot = pool_seq[:3]
         curse_slot = pool_seq[3:]
@@ -776,6 +736,20 @@ class SourceDataHandler:
                                deep: Optional[bool] = None,
                                effect_slot: Optional[int] = None,
                                curse_slot: Optional[int] = None):
+        """
+        Get filtered relics DataFrame based on criteria.
+        
+        :param color: Color of the relic (e.g., 'Red', 'Blue')
+            Suooprt both int (color ID) and str (color name).
+        :type color: Union[int, str]
+        :param deep: Whether to filter for deep relics (True), non-deep relics (False), or all (None).
+        :type deep: Optional[bool]
+        :param effect_slot: Number of effect slots to filter for.
+        :type effect_slot: Optional[int]
+        :param curse_slot: Number of curse slots to filter for.
+        :type curse_slot: Optional[int]
+        """
+        logger.info(f"Getting filtered relics DataFrame with criteria: color={color}, deep={deep}, effect_slot={effect_slot}, curse_slot={curse_slot}")
         result_df: pd.DataFrame = self._relic_table.copy()
         result_df.reset_index(inplace=True)
         safe_range = self.get_safe_relic_ids()
@@ -802,6 +776,9 @@ class SourceDataHandler:
 
     @staticmethod
     def get_safe_relic_ids():
+        """
+        Get a list of safe relic IDs from predefined RELIC_GROUPS.
+        """
         range_names = ["store_102", "store_103", "reward_0",
                        "reward_1", "reward_2", "reward_3",
                        "reward_4", "reward_5", "reward_6", "reward_7",
@@ -814,6 +791,12 @@ class SourceDataHandler:
 
     @staticmethod
     def is_deep_relic(relic_id: int):
+        """
+        Check if a relic ID belongs to deep relic groups.
+
+        :param relic_id: Relic ID to check.
+        :type relic_id: int
+        """
         deep_range_1 = range(RELIC_GROUPS['deep_102'][0],
                              RELIC_GROUPS['deep_102'][1] + 1)
         deep_range_2 = range(RELIC_GROUPS['deep_103'][0],
