@@ -328,7 +328,7 @@ class SourceDataHandler:
 
     def __init__(self, language: str = get_system_language()):
         if self._initialized:
-            logger.info("SourceDataHandler already initialized. Returning...")
+            logger.debug("SourceDataHandler already initialized. Returning...")
             return
         logger.info("Initializing SourceDataHandler...")
         logger.info("Trying to get lock...")
