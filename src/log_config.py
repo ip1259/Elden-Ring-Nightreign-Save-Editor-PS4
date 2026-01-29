@@ -32,7 +32,7 @@ def setup_logging(default_path='logs', default_level=logging.DEBUG):
             },
             "file": {
                 "class": "logging.handlers.RotatingFileHandler",
-                "level": "DEBUG",  # Keep detailed logs in file
+                "level": "WARNING",  # Keep detailed logs in file
                 "formatter": "detailed",
                 "filename": log_file_path,
                 "maxBytes": 5 * 1024 * 1024,  # 5MB per file
