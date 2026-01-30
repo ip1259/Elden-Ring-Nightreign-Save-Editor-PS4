@@ -731,13 +731,18 @@ class InventoryHandler:
             raise ValueError("Relic not found in inventory")
 
     def refresh_relics_dataframe(self):
-        cols = ['relic_id', 'effect_1', 'effect_2', 'effect_3',
+        cols = ['ga_handle', 'relic_id', 'effect_1', 'effect_2', 'effect_3',
                 'curse_1', 'curse_2', 'curse_3']
-        self.relics_df = pd.DataFrame(columns=cols)
+
+        rows = []
         for ga_handle, entry in self.relics.items():
             relic_id = entry.state.real_item_id
             effects = entry.state.effects_and_curses
-            self.relics_df.loc[len(self.relics_df)] = [relic_id] + effects
+
+            row = [ga_handle, relic_id] + effects
+            rows.append(row)
+
+        self.relics_df = pd.DataFrame(rows, columns=cols)
 
     def debug_print(self, non_zero_only=False):
         for i, state in enumerate(self.states):
