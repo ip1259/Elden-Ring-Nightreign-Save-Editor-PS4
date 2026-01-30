@@ -2,7 +2,7 @@ import struct
 from typing import Literal
 from relic_checker import RelicChecker, InvalidReason, is_curse_invalid
 from source_data_handler import SourceDataHandler
-from globals import ITEM_TYPE_RELIC, ITEM_TYPE_WEAPON, ITEM_TYPE_ARMOR
+from globals import ITEM_TYPE_RELIC, ITEM_TYPE_WEAPON, ITEM_TYPE_ARMOR, UNIQUENESS_IDS
 import globals
 import logging
 import threading
@@ -409,7 +409,7 @@ class InventoryHandler:
                 strict_invalid_relics.append(ga)
 
         for real_id, gas in relic_group_by_id.items():
-            if real_id in checker.UNIQUENESS_IDS:
+            if real_id in UNIQUENESS_IDS:
                 if len(gas) > 1:
                     legal_found = False
                     for ga in gas:

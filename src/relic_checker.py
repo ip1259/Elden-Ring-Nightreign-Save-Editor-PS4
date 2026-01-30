@@ -38,11 +38,6 @@ def is_curse_invalid(reason: int):
 
 class RelicChecker:
     RELIC_RANGE: tuple[int, int] = (100, 2013322)
-    UNIQUENESS_IDS: set[int] = \
-        set(i for i in range(RELIC_GROUPS['unique_1'][0],
-                             RELIC_GROUPS['unique_1'][1] + 1)) |\
-        set(i for i in range(RELIC_GROUPS['unique_2'][0],
-                             RELIC_GROUPS['unique_2'][1] + 1))
 
     def __init__(self):
         self.data_source = SourceDataHandler()

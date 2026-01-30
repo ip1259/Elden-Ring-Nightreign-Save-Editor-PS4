@@ -26,7 +26,7 @@ from log_config import setup_logging
 from basic_class import Item
 import globals
 from globals import (ITEM_TYPE_RELIC, ITEM_TYPE_GOODS,
-                     WORKING_DIR, COLOR_MAP)
+                     WORKING_DIR, COLOR_MAP, UNIQUENESS_IDS)
 
 from relic_checker import RelicChecker, InvalidReason, is_curse_invalid
 from source_data_handler import SourceDataHandler, get_system_language
@@ -3611,7 +3611,7 @@ class SaveEditorGUI:
         # Check for forbidden relics (unique relics that are technically invalid but allowed) - ignore
         # Unique Relics have own special roll pool so they are NOT technically invalid
         
-        forbidden_relics = RelicChecker.UNIQUENESS_IDS
+        forbidden_relics = UNIQUENESS_IDS
 
         # Count truly illegal relics (exclude forbidden/unique relics from count) - ignore
         # Forbidden relics are marked orange and shouldn't count as "illegal" - ignore
@@ -4228,7 +4228,7 @@ class SaveEditorGUI:
             effects = self.inventory_handler.relics[ga].state.effects_and_curses
 
             # Skip unique relics
-            if real_id in RelicChecker.UNIQUENESS_IDS:
+            if real_id in UNIQUENESS_IDS:
                 continue
 
             _relic = self.game_data.relics.get(real_id)

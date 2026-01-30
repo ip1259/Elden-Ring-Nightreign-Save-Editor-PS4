@@ -63,6 +63,13 @@ RELIC_GROUPS: dict[str, tuple[int, int]] = {"store_102": (100, 199),
                                             }
 
 
+UNIQUENESS_IDS: set[int] = \
+        set(i for i in range(RELIC_GROUPS['unique_1'][0],
+                             RELIC_GROUPS['unique_1'][1] + 1)) |\
+        set(i for i in range(RELIC_GROUPS['unique_2'][0],
+                             RELIC_GROUPS['unique_2'][1] + 1))
+
+
 # Function
 def get_now_timestamp():
     EPOCH_OFFSET = 11644473600
