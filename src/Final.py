@@ -7,6 +7,12 @@ Refactor Summary:
 3. Data Handling: Enhanced Murks and Sigs access. They are now exposed as class members, 
    where setters perform direct modification of the underlying binary data.
 4. Localization: Automated language code detection to replace hardcoded defaults.
+
+TODO:
+    'Save File' auto Backup
+    Unlock State Parse
+    Update Checker
+    Selective Loadout Import
 """
 from main_file import decrypt_ds2_sl2, encrypt_modified_files
 from main_file_import import decrypt_ds2_sl2_import
