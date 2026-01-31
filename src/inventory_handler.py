@@ -312,6 +312,41 @@ class ItemEntry:
         return f"ItemEntry(ga_handle=0x{self.ga_handle:08X}, item_id={self.instance_id}, item_amount={self.item_amount}, acquisition_id={self.acquisition_id}, is_favorite={self.is_favorite}, is_new={self.is_new})"
 
 
+class UnlockStateManager:
+    """
+    Placeholder class for game progress and unlock status.
+        The specific data structure for this section is still under investigation.
+        Established now for preliminary checks and to facilitate rapid implementation once
+        the parsing logic is finalized.
+    """
+    def __init__(self):
+        self.game_data = SourceDataHandler()
+
+    def is_vessel_unlocked(self, vessel_id) -> bool:
+        """
+        Placeholder Checks if the vessel is unlocked based on game progress.
+        Currently, all vessels are considered unlocked by default.
+
+        :param vessel_id: The vessel ID to check.
+        :type vessel_id: int
+        :return: True if the vessel is unlocked, False otherwise.
+        :rtype: bool
+        """
+        return True
+
+    def is_character_unlocked(self, hero_type) -> bool:
+        """
+        Placeholder Checks if the character is unlocked based on game progress.
+        Currently, all characters are considered unlocked by default.
+
+        :param hero_type: The hero type ID to check.
+        :type hero_type: int
+        :return: True if the character is unlocked, False otherwise.
+        :rtype: bool
+        """
+        return True
+
+
 class InventoryHandler:
     _instance = None
     _lock = threading.RLock()
@@ -349,6 +384,7 @@ class InventoryHandler:
             reset with set_illegal_relics.
         """
         self._initialized = True
+        self.unlock_manager = UnlockStateManager()
         self.states: list[ItemState] = []
         self.entries: list[ItemEntry] = []
         self.relics: dict[int, ItemEntry] = {}
