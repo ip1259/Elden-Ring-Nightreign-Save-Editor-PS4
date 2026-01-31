@@ -631,11 +631,19 @@ class LoadoutHandler:
         self.modifier.update_all_loadouts(self.heroes)
 
     def check_hero(self, hero_type: int):
-        return hero_type in self.heroes
+        # Check if character is unlocked
+        if hero_type not in range(1, 11):
+            raise ValueError("Invalid hero type")
+        if not self.inventory.unlock_manager.is_character_unlocked(hero_type):
+            msg = f"{self.game_data.character_names[hero_type-1]} is not unlocked."
+            logger.warning(msg)
+            raise ValueError(msg)
+        if hero_type not in self.heroes:
+            raise ValueError("Hero not found. This shouldn't happen. Save file may be corrupted.")
+        return True
 
     def check_vessel(self, hero_type: int, vessel_id: int):
-        if not self.check_hero(hero_type):
-            raise ValueError("Hero not found")
+        self.check_hero(hero_type)
         return any(v["vessel_id"] == vessel_id for v in self.heroes[hero_type].vessels)
 
     def get_vessel_id(self, hero_type: int, vessel_index: int):
@@ -655,10 +663,7 @@ class LoadoutHandler:
             raise ValueError("Invalid relic index")
 
     def equip_preset(self, hero_type: int, preset_index: int):
-        if hero_type not in range(1, 11):
-            raise ValueError("Invalid hero type")
-        if hero_type not in self.heroes:
-            raise ValueError("Hero not found. This shouldn't happen. Save file may be corrupted.")
+        self.check_hero(hero_type)
         if preset_index < len(self.all_presets):
             self.heroes[hero_type].cur_preset_idx = preset_index
             self.heroes[hero_type].cur_vessel_id = self.all_presets[preset_index]["vessel_id"]
@@ -689,6 +694,7 @@ class LoadoutHandler:
         :returns: return the modified data as immutable bytes.
         :rtype: bytes
         """
+        self.check_hero(hero_type)
         # Check Preset Capacity
         if len(self.all_presets) > 100:
             raise LoadoutHandler.PresetsCapacityFullError("Maximum preset capacity reached.")
@@ -733,6 +739,7 @@ class LoadoutHandler:
 
     def replace_vessel_relic(self, hero_type: int, vessel_id: int,
                              relic_index: int, new_relic_ga):
+        self.check_hero(hero_type)
         _new_vessel = None
         vessel_index = 0
         for idx, vessel in enumerate(self.heroes[hero_type].vessels):
@@ -758,6 +765,7 @@ class LoadoutHandler:
 
     def replace_preset_relic(self, hero_type: int, relic_index: int, new_relic_ga,
                              hero_preset_index: int = -1, preset_index: int = -1):
+        self.check_hero(hero_type)
         if hero_preset_index < 0 and preset_index < 0:
             raise ValueError("hero_preset_index or preset_index should be provided")
         if hero_preset_index >= 0 and preset_index >= 0:
@@ -803,6 +811,11 @@ class LoadoutHandler:
             json_bytes = f.read()
             import_data = orjson.loads(json_bytes)
         hero_type = import_data["hero_type"]
+        try:
+            self.check_hero(hero_type)
+        except ValueError as ve:
+            return [str(ve)]
+
         # Set current vessel id
         im_cur_vessel_id = import_data["cur_vessel_id"]
         if self.validator.check_vessel_assignment(self.heroes, hero_type, im_cur_vessel_id):
