@@ -75,7 +75,9 @@ class AttachEffect:
             try:
                 row = self._name_df[self._name_df["id"] == self.text_id]
                 if not row.empty:
-                    return row["text"].values[0]
+                    text = row["text"].values[0]
+                    text = " ".join(text.split("\n"))
+                    return text
                 return "Unknown"
             except Exception:
                 return "Unknown"

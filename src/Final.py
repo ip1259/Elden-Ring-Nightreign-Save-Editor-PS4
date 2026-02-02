@@ -20,7 +20,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
 # openpyxl is lazy-loaded in export/import functions to speed up startup
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 import sys
 import threading
 import re
@@ -3205,7 +3205,11 @@ class SaveEditorGUI:
             return
 
         try:
-            result_msgs = self.loadout_handler.import_hero_loadout(file_path)
+            import_loadout_generator = self.loadout_handler.import_hero_loadout(file_path)
+            selected_data = next(import_loadout_generator)
+            selector = LoadoutSelector(self.root, selected_data)
+            self.root.wait_window(selector)
+            result_msgs = import_loadout_generator.send(selector.get_selection())
             self.refresh_inventory_and_vessels()
             messagebox.showinfo("Success", "\n".join(result_msgs))
 
@@ -6222,6 +6226,143 @@ class RelicTypeSelector(tk.Toplevel):
     def set_result(self, value):
         self.result = value
         self.destroy()
+
+
+class LoadoutSelector(tk.Toplevel):
+    """
+    Advanced Loadout Import Dialog with fixed effect/curse slicing logic.
+    Supports multi-selection and displays relic properties with color coding.
+    """
+    def __init__(self, parent, loadout_data: Dict):
+        super().__init__(parent)
+        self.title("Select Loadouts to Import")
+        self.geometry("700x750")
+        self.transient(parent)  # Keeps window on top of parent
+        
+        # Data Handlers
+        self.inventory = InventoryHandler()
+        self.game_data = SourceDataHandler()
+        
+        self.loadout_data = loadout_data
+        self.selected_vessels = []
+        self.selected_presets = []
+        
+        # Color Theme: Normal (Vibrant) vs Deep (Dark/Desaturated)
+        self.color_palette = {
+            "Red":    {"normal": "#FF4D4D", "deep": "#C10303"},
+            "Blue":   {"normal": "#7676FB", "deep": "#4C4CDD"},
+            "Yellow": {"normal": "#FFD700", "deep": "#A87C0F"},
+            "Green":  {"normal": "#4DFF4D", "deep": "#009600"},
+            "White":  {"normal": "#FFFFFF", "deep": "#A9A9A9"}
+        }
+        self.bg_color = "#242635"
+
+        self._init_ui()
+
+    def _init_ui(self):
+        # Main Layout: Scrollable Canvas Setup
+        self.container = ttk.Frame(self)
+        self.container.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(self.container, highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self.container, orient="vertical", command=self.canvas.yview)
+        self.scroll_content = ttk.Frame(self.canvas)
+
+        self.scroll_content.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+
+        self.canvas.create_window((0, 0), window=self.scroll_content, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Content Sections
+        self._build_section("Vessels", self.loadout_data.get("vessels", []), is_preset=False)
+        self._build_section("Presets", self.loadout_data.get("presets", []), is_preset=True)
+
+        # Control Panel
+        controls = ttk.Frame(self)
+        controls.pack(fill=tk.X, side=tk.BOTTOM, pady=12, padx=12)
+        ttk.Button(controls, text="Confirm Selection", command=self._handle_confirm).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(controls, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+
+    def _build_section(self, title: str, items: List[Dict], is_preset: bool):
+        """Builds a UI section for either Vessels or Presets."""
+        header = ttk.Label(self.scroll_content, text=title, font=("Helvetica", 13, "bold"))
+        header.pack(anchor="w", pady=(15, 5), padx=10)
+
+        for i, item in enumerate(items):
+            # Outer frame for each loadout item
+            
+            frame = tk.LabelFrame(self.scroll_content, bg=self.bg_color, fg="white", bd=1)
+            frame.pack(fill=tk.X, padx=15, pady=8)
+
+            var = tk.BooleanVar(value=True)
+            item["_check_var"] = var
+            
+            name = item.get("name") if is_preset else self.game_data.vessels[item.get('vessel_id')].name
+            chk = tk.Checkbutton(frame, text=name, variable=var, 
+                               bg=self.bg_color, fg="white", selectcolor="#444444",
+                               activebackground=self.bg_color, font=("Helvetica", 12, "bold"))
+            chk.pack(anchor="w", padx=5, pady=5)
+
+            # Relics Detail Container
+            relic_list_frame = tk.Frame(frame, bg=self.bg_color)
+            relic_list_frame.pack(fill=tk.X, padx=25, pady=(0, 10))
+
+            for ga_handle in item.get("relics", []):
+                self._draw_relic_row(relic_list_frame, ga_handle)
+
+    def _draw_relic_row(self, parent: tk.Frame, ga_handle: int):
+        """Processes relic ID list: [E1, E2, E3, C1, C2, C3] and draws it."""
+        relic_obj = self.inventory.relics.get(ga_handle)
+        if not relic_obj: return
+
+        state = relic_obj.state
+        static_data = self.game_data.relics[state.real_item_id]
+        
+        # Color Selection
+        color_info = self.color_palette.get(static_data.color, self.color_palette["White"])
+        is_deep = self.game_data.relics[state.real_item_id].is_deep()
+        text_color = color_info["deep"] if is_deep else color_info["normal"]
+
+        # Relic Header (Name)
+        tk.Label(parent, text=f"◆ {static_data.name}", fg=text_color, bg=self.bg_color, 
+                 font=("Helvetica", 10, "bold")).pack(anchor="w")
+
+        # Slicing Logic: [0:3] are effects, [3:6] are curses
+        ids = state.effects_and_curses
+        effects_ids = ids[0:3]
+        curses_ids = ids[3:6]
+
+        # Pairing for 3 Rows
+        for j in range(3):
+            row = tk.Frame(parent, bg=self.bg_color)
+            row.pack(fill=tk.X, padx=15)
+
+            # Left: Effect
+            if j < len(effects_ids) and effects_ids[j] != 0: # Check if ID is valid (not 0)
+                eff_name = self.game_data.effects[effects_ids[j]].name
+                tk.Label(row, text=f" • {eff_name}", fg=text_color, bg=self.bg_color, 
+                         font=("Helvetica", 9)).pack(side=tk.LEFT)
+
+            # Right: Curse
+            if j < len(curses_ids) and curses_ids[j] != 0:
+                cur_name = self.game_data.effects[curses_ids[j]].name
+                tk.Label(row, text=f"   ❗{cur_name}", fg=text_color, bg=self.bg_color, 
+                         font=("Helvetica", 9, "italic")).pack(side=tk.LEFT)
+
+    def _handle_confirm(self):
+        """Finalize indices and close."""
+        self.selected_vessels = [i for i, v in enumerate(self.loadout_data["vessels"]) if v["_check_var"].get()]
+        self.selected_presets = [i for i, p in enumerate(self.loadout_data["presets"]) if p["_check_var"].get()]
+        self.destroy()
+
+    def get_selection(self):
+        return self.selected_vessels, self.selected_presets
 
 
 def main():
