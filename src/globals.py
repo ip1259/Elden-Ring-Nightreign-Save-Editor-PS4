@@ -5,6 +5,7 @@ import time
 
 # Global variables
 WORKING_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+ICONS_DIR = Path(WORKING_DIR / "Resources/Icons")
 # In other modules, use globals.data instead of the data variable to avoid naming conflicts.
 data = None
 

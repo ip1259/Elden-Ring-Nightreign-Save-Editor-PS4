@@ -11,7 +11,6 @@ Refactor Summary:
 TODO:
     Unlock State Parse
     Update Checker
-    Selective Loadout Import
 """
 from main_file import decrypt_ds2_sl2, encrypt_modified_files
 from main_file_import import decrypt_ds2_sl2_import
@@ -28,12 +27,14 @@ import logging
 import inspect
 import zipfile
 from datetime import datetime
+from PIL import Image, ImageTk
 # project modules
 from log_config import setup_logging
 from basic_class import Item
 import globals
 from globals import (ITEM_TYPE_RELIC, ITEM_TYPE_GOODS,
-                     WORKING_DIR, COLOR_MAP, UNIQUENESS_IDS)
+                     WORKING_DIR, COLOR_MAP, UNIQUENESS_IDS,
+                     ICONS_DIR)
 
 from relic_checker import RelicChecker, InvalidReason, is_curse_invalid
 from source_data_handler import SourceDataHandler, get_system_language
@@ -1046,11 +1047,19 @@ class SaveEditorGUI:
                         font=('Arial', 10, 'bold'))
         style.configure('DeepRelic.TButton', foreground='#694fff',
                         font=('Arial', 10, 'bold'))
+        # Make TreeView Heading Image centered
+        new_style_TH = [('Treeheading.cell', {'sticky': 'nswe'}), ('Treeheading.border', {'sticky': 'nswe', 'children': [('Treeheading.padding', {'sticky': 'nswe', 'children': [('Treeheading.image', {'sticky': ''}), ('Treeheading.text', {'sticky': 'we'})]})]})]
+        style.layout('Treeview.Heading', new_style_TH)
 
         self.game_data = SourceDataHandler()
         self.relic_checker = RelicChecker()
         self.inventory_handler = InventoryHandler()
         self.loadout_handler = LoadoutHandler()
+
+        self.fav_icon_img = ImageTk.PhotoImage(Image.open(ICONS_DIR/"bookmark.png").resize((16, 16)))
+        self.empty_img = ImageTk.PhotoImage(Image.new("RGBA", (16, 16), (0,0,0,0)))
+        # Color Pattern
+        self.favorite_color_var = tk.StringVar(value="#FDFFBE")
 
         self.root = root
         self.root.title("Elden Ring NightReign Save Editor")
@@ -1086,7 +1095,8 @@ class SaveEditorGUI:
         self.root.after(100, self.try_load_last_file)
         
     def run_task_async(self, task_func, args=(), title="Processing",
-                       label_text="Please wait...", callback=None, progress_bar=None):
+                       label_text="Please wait...",
+                       callback=None, progress_bar=None):
         """
         A universal async wrapper to run heavy tasks without freezing the GUI.
         
@@ -1095,6 +1105,8 @@ class SaveEditorGUI:
         :param title: Window title of the loading popup.
         :param label_text: Message displayed in the loading popup.
         :param callback: A function to run in the main thread after task_func finishes successfully.
+        :param progress_bar: If True, shows a determinate progress bar; otherwise indeterminate.
+        :type progress_bar: bool
         """
         # 1. Create a top-level loading window
         loading_win = tk.Toplevel(self.root)
@@ -1104,57 +1116,66 @@ class SaveEditorGUI:
         loading_win.attributes("-topmost", True)
         loading_win.transient(self.root)
         
-        # Center the loading window relative to main window
+        # Disable manual close button to prevent state desync
+        loading_win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        # Center the loading window
         loading_win.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (loading_win.winfo_width() // 2)
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (loading_win.winfo_height() // 2)
         loading_win.geometry(f"+{x}+{y}")
 
-        # UI Elements
-        lbl = ttk.Label(loading_win, text=label_text, font=('Arial', 10), wraplength=300).pack(pady=20)
-        progress_mode = 'indeterminate' if progress_bar is None else 'determinate'
+        # UI Elements (Fixed: Separate assignment from .pack())
+        lbl = ttk.Label(loading_win, text=label_text, font=('Arial', 10), wraplength=300)
+        lbl.pack(pady=20)
+        
+        progress_mode = 'determinate' if progress_bar else 'indeterminate'
         progress = ttk.Progressbar(loading_win, mode=progress_mode, length=250)
         progress.pack(pady=10)
+        
         if progress_mode == 'indeterminate':
             progress.start(10)
         else:
             progress['value'] = 0
 
-        # Critical: Lock the main GUI to prevent data corruption/multiple clicks
+        # Lock main GUI
         loading_win.grab_set()
 
-        def update_progress(value=None, new_text=None):
-            self.root.after(0, lambda: _ui_update(value, new_text))
-
         def _ui_update(value, new_text):
+            # Check if window still exists before updating
+            if not loading_win.winfo_exists():
+                return
             if progress_mode == 'determinate' and value is not None:
                 progress['value'] = value
             if new_text:
                 lbl.config(text=new_text)
 
+        def update_progress(value=None, new_text=None):
+            self.root.after(0, lambda: _ui_update(value, new_text))
+
         def thread_wrapper():
             try:
                 # 2. Execute the heavy task
                 sig = inspect.signature(task_func)
-            
+                
                 if 'update_progress' in sig.parameters:
                     task_func(*args, update_progress=update_progress)
                 else:
                     task_func(*args)
                 
-                # 3. Task finished: Close window and run callback in main thread
+                # 3. Task finished successfully
                 self.root.after(0, lambda: finish_task(True))
             except Exception as e:
-                # Task failed: Close window and show error in main thread
+                # Task failed
                 err_msg = str(e)
                 self.root.after(0, lambda: finish_task(False, err_msg))
 
         def finish_task(success, err_msg=None):
-            # Release the GUI lock and close popup
-            loading_win.destroy()
+            if loading_win.winfo_exists():
+                loading_win.grab_release()
+                loading_win.destroy()
             
             if success:
-                # Execute the provided callback if any
                 if callback:
                     callback()
             else:
@@ -3286,7 +3307,6 @@ class SaveEditorGUI:
         ttk.Label(legend_frame, text="Purple = Missing Curse", foreground="#800080").pack(side='left', padx=5)
         ttk.Label(legend_frame, text="Orange = Unique Relic (don't edit)", foreground="#FF8C00").pack(side='left', padx=5)
         ttk.Label(legend_frame, text="Teal = Strict Invalid", foreground="#008080").pack(side='left', padx=5)
-        ttk.Label(legend_frame, text="Yellow BG = Favorite", background="#FFFF00", foreground="black").pack(side='left', padx=5)
 
         # Search frame - Row 1: Basic search and filters
         search_frame = ttk.Frame(self.inventory_tab)
@@ -3347,17 +3367,18 @@ class SaveEditorGUI:
         # Treeview for relics (with Equipped By and Deep columns)
         # Note: "Curse" columns show curse effects for deep relics
         # "#" column shows acquisition order (lower = older)
-        columns = ('Item Name', 'Deep', 'Item ID', 'Color', 'Equipped By', 'Effect 1', 'Effect 2', 'Effect 3',
+        columns = ('#', 'Item Name', 'Deep', 'Item ID', 'Color', 'Equipped By', 'Effect 1', 'Effect 2', 'Effect 3',
                    'Curse 1', 'Curse 2', 'Curse 3')
 
         self.tree = ttk.Treeview(inv_frame, columns=columns, show='tree headings', height=20)
 
         # Configure columns - # column shows acquisition order
-        self.tree.heading('#0', text='#')
-        self.tree.column('#0', width=50, minwidth=50, stretch=False)
+        self.tree.heading('#0', image=self.fav_icon_img, anchor='center')
+        self.tree.column('#0', width=60, minwidth=60)
 
         # Set column widths - more space for effect names
         col_widths = {
+            "#": 50,
             'Item Name': 180,
             'Deep': 40,
             'Item ID': 80,
@@ -3376,7 +3397,7 @@ class SaveEditorGUI:
             self.tree.column(col, width=col_widths.get(col, 150), minwidth=80)
 
         # Also allow sorting by # column (sorts by acquisition order)
-        self.tree.heading('#0', text='#', command=lambda: self.sort_by_column('#'))
+        self.tree.heading('#0', command=lambda: self.sort_by_column('FAV'))
 
         # Track sort state
         self.sort_column = None
@@ -3775,6 +3796,7 @@ class SaveEditorGUI:
         # Calculate acquisition rank (1, 2, 3...) based on acquisition_index
         # Sort by acquisition_index and assign ranks
         sorted_by_acq = sorted(self.all_relics, key=lambda r: r.get('acquisition_index', 999999))
+        self.all_relics.sort(key=lambda r: r.get('acquisition_index', 999999), reverse=True)
         for rank, relic in enumerate(sorted_by_acq, start=1):
             relic['acquisition_rank'] = rank
 
@@ -3898,16 +3920,15 @@ class SaveEditorGUI:
         self.tree.tag_configure('illegal', foreground='red', font=('Arial', 9, 'bold'))
         self.tree.tag_configure('strict_invalid', foreground='#008080', font=('Arial', 9))  # Teal for strict invalid
         self.tree.tag_configure('deep', foreground="#172752")  # Subtle color for deep relics, no background
-        self.tree.tag_configure('favorite', background="#FAFF6E")  # Yellow background for favorite relics
-
 
         # sort filtered relics by acquisition rank
-        filtered_relics.sort(key=lambda r: r.get('acquisition_rank', 0), reverse=True)
+        # filtered_relics.sort(key=lambda r: r.get('acquisition_rank', 0), reverse=True)
 
         # Populate treeview with filtered results
         for relic in filtered_relics:
             is_deep = relic.get('is_deep', False)
             deep_indicator = "🔮" if is_deep else ""  # Crystal ball emoji for deep relics
+            is_favorite = relic.get('is_favorite', False)
 
             # Build tags list - include 'deep' tag for deep relics
             tags = list(relic['tag_list'])
@@ -3915,12 +3936,13 @@ class SaveEditorGUI:
                 tags.append('deep')
 
             # Use acquisition_rank for the # column (1 = oldest, 2 = second oldest, etc.)
-            self.tree.insert('', 'end', text=str(relic.get('acquisition_rank', 0)),
-                           values=(relic['item_name'], deep_indicator, relic['real_id'], relic['item_color'],
-                                  relic.get('equipped_by_str', '-'),
-                                  relic['effect_names'][0], relic['effect_names'][1], relic['effect_names'][2],
-                                  relic['effect_names'][3], relic['effect_names'][4], relic['effect_names'][5]),
-                           tags=tuple(tags))
+            self.tree.insert('', 'end',
+                             image=self.fav_icon_img if is_favorite else self.empty_img,
+                             values=(str(relic.get('acquisition_rank', 0)), relic['item_name'], deep_indicator, relic['real_id'], relic['item_color'],
+                                     relic.get('equipped_by_str', '-'),
+                                     relic['effect_names'][0], relic['effect_names'][1], relic['effect_names'][2],
+                                     relic['effect_names'][3], relic['effect_names'][4], relic['effect_names'][5]),
+                             tags=tuple(tags))
 
         # Auto-size columns after populating
         autosize_treeview_columns(self.tree)
@@ -3960,9 +3982,10 @@ class SaveEditorGUI:
 
         # Define sort key based on column
         def get_sort_key(relic):
-            if col == '#':
-                # Sort by acquisition rank (1 = oldest, 2 = second oldest, etc.)
-                return relic.get('acquisition_rank', 999999)
+            if col == 'FAV':
+                return 1 if relic.get('is_favorite', False) else 0
+            elif col == '#':
+                return relic.get('acquisition_rank', 99999)
             elif col == 'Item Name':
                 return relic['item_name'].lower()
             elif col == 'Deep':
@@ -3994,7 +4017,7 @@ class SaveEditorGUI:
         self.filter_relics()
 
         # Update column header to show sort indicator
-        columns = ('Item Name', 'Deep', 'Item ID', 'Color', 'Equipped By', 'Effect 1', 'Effect 2', 'Effect 3',
+        columns = ('#', 'Item Name', 'Deep', 'Item ID', 'Color', 'Equipped By', 'Effect 1', 'Effect 2', 'Effect 3',
                    'Curse 1', 'Curse 2', 'Curse 3')
         for c in columns:
             indicator = ''
@@ -4002,11 +4025,11 @@ class SaveEditorGUI:
                 indicator = ' ▼' if self.sort_reverse else ' ▲'
             self.tree.heading(c, text=c + indicator)
 
-        # Update # column header
-        if col == '#':
-            self.tree.heading('#0', text='#' + (' ▼' if self.sort_reverse else ' ▲'))
+        # Update FAV column header
+        if col == 'FAV':
+            self.tree.heading('#0', text=(' ▼' if self.sort_reverse else ' ▲'))
         else:
-            self.tree.heading('#0', text='#')
+            self.tree.heading('#0')
 
     def show_context_menu(self, event):
         # Select item under cursor
