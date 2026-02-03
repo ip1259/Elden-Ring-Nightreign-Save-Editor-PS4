@@ -11,6 +11,7 @@ Refactor Summary:
 TODO:
     Unlock State Parse
     Update Checker
+    Dark Mode
 """
 from main_file import decrypt_ds2_sl2, encrypt_modified_files
 from main_file_import import decrypt_ds2_sl2_import
