@@ -20,7 +20,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
 # openpyxl is lazy-loaded in export/import functions to speed up startup
-from typing import Optional, Any, List, Dict
+from typing import Optional, Any, List, Dict, Union
 import sys
 import threading
 import re
@@ -65,6 +65,7 @@ userdata_path = None
 CONFIG_FILE = os.path.join(get_base_dir(), "editor_config.json")
 # Save Backup DIr Path
 BACKUP_DIR = os.path.join(get_base_dir(), "backup")
+color_mode = None
 
 
 def backup_save(file_path):
@@ -970,6 +971,160 @@ def find_steam_id(section_data):
 
     return hex_str
 
+
+class ColorTheme:
+    """
+    A thread-safe Singleton to manage GUI themes for Tkinter.
+    Centralizes base background colors and component-specific foregrounds.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(ColorTheme, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self._mode = "light"
+        self._setup_palettes()
+        self._initialized = True
+
+    def _setup_palettes(self) -> None:
+        """
+        Defines the complete color palette including base backgrounds 
+        and semantic component colors for Light and Dark modes.
+        """
+        self._themes = {
+            "light": {
+                # Base UI Backgrounds
+                "base": {
+                    "main_bg": "#FFFFFF",      # Main window background
+                    "card_bg": "#F8F9FA",      # Tab or Frame background
+                    "input_bg": "#FFFFFF",     # Entry or Text background
+                    "text_main": "#000000"     # Default text color
+                },
+                "action": {
+                    "highlight": "#AF4C4C", "add": "green", "danger": "red",
+                    "normal": "#016151", "deep": "#694fff"
+                },
+                "relic": {
+                    'Red': '#FF4444', 'Blue': '#4488FF', 'Yellow': '#B8860B',
+                    'Green': '#44BB44', 'Purple': '#AA44FF', 'Orange': '#FF8C00',
+                    'White': '#AAAAAA', 'Unknown': '#888888', None: '#888888'
+                },
+                "status": {
+                    "valid": "green", "fixable": "#cc6600", "illegal": "red",
+                    "strict_invalid": "#008080", "hint": "#333333",
+                    "mismatch": {"fg": "#ff6b6b", "bg": "#331111"}
+                },
+                "special": {
+                    "unique": "#ff8c00", "illegal_unique": "blue",
+                    "empty": "#666666", "deep_slot": "#9999bb"
+                }
+            },
+            "dark": {
+                # Base UI Backgrounds for Dark Mode
+                "base": {
+                    "main_bg": "#121212",      # Deep dark background
+                    "card_bg": "#1E1E1E",      # Slightly lighter surface
+                    "input_bg": "#2D2D2D",     # Contrast for inputs
+                    "text_main": "#E0E0E0"     # Soft white text
+                },
+                "action": {
+                    "highlight": "#FF8A8A", "add": "#00FF00", "danger": "#FF4444",
+                    "normal": "#48C9B0", "deep": "#BBADFF"
+                },
+                "relic": {
+                    'Red': '#FF6666', 'Blue': '#66AAFF', 'Yellow': '#F1C40F',
+                    'Green': '#66FF66', 'Purple': '#CC88FF', 'Orange': '#FFAA44',
+                    'White': '#DDDDDD', 'Unknown': '#AAAAAA', None: '#AAAAAA'
+                },
+                "status": {
+                    "valid": "#00FF00", "fixable": "#FFB366", "illegal": "#FF5555",
+                    "strict_invalid": "#40E0D0", "hint": "#BBBBBB",
+                    "mismatch": {"fg": "#FF8888", "bg": "#441111"}
+                },
+                "special": {
+                    "unique": "#FFB84D", "illegal_unique": "#8888FF",
+                    "empty": "#AAAAAA", "deep_slot": "#CCCCFF"
+                }
+            }
+        }
+
+    def toggle_theme(self) -> None:
+        """Toggles current theme and returns the new mode."""
+        self._mode = "dark" if self._mode == "light" else "light"
+
+    def get(self, category: str, key: str) -> Union[str, Dict[str, str]]:
+        """Fetch color by category and key."""
+        return self._themes[self._mode].get(category, {}).get(key)
+    
+    def _update_ttk_styles(self):
+        """
+        Updates the global ttk Style database to match the current mode.
+        """
+        if not self._style:
+            self._style = ttk.Style()
+        
+        base = self._themes[self._mode]["base"]
+        
+        # Configure the 'T' prefixed default styles
+        # TFrame, TLabel, TButton are the standard ttk style names
+        self._style.configure("TFrame", background=base["bg"])
+        self._style.configure("TLabel", background=base["bg"], foreground=base["fg"])
+        self._style.configure("TButton", background=base["btn_bg"], foreground=base["fg"])
+        self._style.configure("TNotebook", background=base["bg"], tabmargins=[2, 5, 2, 0])
+        self._style.configure("TNotebook.Tab", background=base["btn_bg"], foreground=base["fg"])
+        
+        # Mapping specific states (e.g., when a tab is selected)
+        self._style.map("TNotebook.Tab", 
+                        background=[("selected", base["bg"])],
+                        foreground=[("selected", base["fg"])]
+                        )
+
+    def apply(self, root: tk.Tk):
+        """
+        Applies theme to ttk styles and recursively updates standard tk widgets.
+        """
+        # 1. Update the ttk Style engine first
+        self._update_ttk_styles()
+
+        # 2. Recursively update standard tk widgets (as before)
+        self._recursive_update(root)
+
+    def _recursive_update(self, widget: tk.Widget):
+        """Inner helper to traverse the widget tree for standard tk objects."""
+        base = self._themes[self._mode]["base"]
+
+        # Only apply manual config to non-ttk widgets 
+        # (ttk widgets usually start with 'ttk::' in their internal name)
+        if not str(widget).startswith(".!ttk"):
+            if isinstance(widget, (tk.Tk, tk.Toplevel, tk.Frame, tk.LabelFrame)):
+                widget.config(bg=base["bg"])
+            elif isinstance(widget, (tk.Label, tk.Button, tk.Checkbutton)):
+                widget.config(bg=base["bg"], fg=base["fg"])
+        
+        for child in widget.winfo_children():
+            self._recursive_update(child)
+
+    @property
+    def bg(self) -> str:
+        """Shortcut to get main background color."""
+        return self.get("base", "main_bg")
+
+    @property
+    def fg(self) -> str:
+        """Shortcut to get main text color."""
+        return self.get("base", "text_main")
+
+
 class SearchableCombobox(ttk.Frame):
     """A combobox with search functionality and manual entry"""
     def __init__(self, parent, values, **kwargs):
@@ -1039,9 +1194,13 @@ class SaveEditorGUI:
     relic_checker: Optional[RelicChecker] = None
 
     def __init__(self, root):
+        global color_mode
+        color_mode = tk.StringVar(value="light")
         
         # ttk Style setting
         style = ttk.Style()
+        style.configure("Char.TButton", font=('Arial', 10), padding=5)
+        style.configure("Highlighted.TButton", font=('Arial', 10), padding=5, background="#AF4C4C", foreground="red")
         style.configure('Add.TButton', foreground='green', font=('Arial', 10, 'bold'))
         style.configure('Danger.TButton', foreground='red', font=('Arial', 10))
         style.configure('NormalRelic.TButton', foreground='#016151',
@@ -1058,10 +1217,9 @@ class SaveEditorGUI:
         self.loadout_handler = LoadoutHandler()
 
         self.fav_icon_img = ImageTk.PhotoImage(Image.open(ICONS_DIR/"bookmark.png").resize((16, 16)))
+        self.fav_icon_img_dark = ImageTk.PhotoImage(Image.open(ICONS_DIR/"bookmark_dark.png").resize((16, 16)))
         self.empty_img = ImageTk.PhotoImage(Image.new("RGBA", (16, 16), (0,0,0,0)))
-        # Color Pattern
-        self.favorite_color_var = tk.StringVar(value="#FDFFBE")
-
+        
         self.root = root
         self.root.title("Elden Ring NightReign Save Editor")
         self.root.geometry("1000x700")
@@ -3544,11 +3702,6 @@ class SaveEditorGUI:
         # Clear existing buttons
         for widget in self.char_button_frame.winfo_children():
             widget.destroy()
-        
-        # Create styles
-        style = ttk.Style()
-        style.configure("Char.TButton", font=('Arial', 10), padding=5)
-        style.configure("Highlighted.TButton", font=('Arial', 10), padding=5, background="#AF4C4C", foreground="red")
         
         self.char_buttons = []
         
