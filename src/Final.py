@@ -3983,13 +3983,13 @@ class SaveEditorGUI:
         # Define sort key based on column
         def get_sort_key(relic):
             if col == 'FAV':
-                return 1 if relic.get('is_favorite', False) else 0
+                return 0 if relic.get('is_favorite', False) else 1
             elif col == '#':
                 return relic.get('acquisition_rank', 99999)
             elif col == 'Item Name':
                 return relic['item_name'].lower()
             elif col == 'Deep':
-                return relic.get('is_deep', False)
+                return 0 if relic.get('is_deep', False) else 1
             elif col == 'Item ID':
                 return relic['real_id']
             elif col == 'Color':
