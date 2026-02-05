@@ -1050,11 +1050,11 @@ class ColorTheme:
                     "empty": "#666666", "deep_slot": "#9999bb"
                 },
                 "loadout": {
-                    "Red":    {"normal": "#FD2424", "deep": "#5E0101"},
-                    "Blue":   {"normal": "#2828FF", "deep": "#080893"},
-                    "Yellow": {"normal": "#BEA827", "deep": "#694E08"},
-                    "Green":  {"normal": "#04A204", "deep": "#005100"},
-                    "White":  {"normal": "#6C6C6C", "deep": "#4B4B4B"}
+                    "Red":    {"normal": "#FF4444", "deep": "#5E0101"},
+                    "Blue":   {"normal": "#4488FF", "deep": "#080893"},
+                    "Yellow": {"normal": "#B8860B", "deep": "#694E08"},
+                    "Green":  {"normal": "#44BB44", "deep": "#005100"},
+                    "White":  {"normal": "#AAAAAA", "deep": "#4B4B4B"}
                 }
             },
             "dark": {
