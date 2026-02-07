@@ -102,10 +102,12 @@ class LanguageManager:
         except Exception as e:
             logger.error(f"LanguageManager Update Error: {e}")
 
-    def load_language(self, lang_code, localedir=WORKING_DIR / 'locales'):
+    def load_language(self, lang_code, localedir=WORKING_DIR / 'Resources' / 'locales'):
         """
         Loads the .mo file and triggers a UI refresh for all registered widgets.
         """
+        logger.warning(f"Loading language: {lang_code}")
+        logger.warning(f"Localedir: {localedir}")
         try:
             # Create translation object and install _() into builtins
             trans = gettext.translation(
