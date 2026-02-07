@@ -35,16 +35,18 @@ class ConfigManager:
                 if not self._initialized:
                     self._initialized = True
                     self._config = self._load_config()
+                    self.save()
 
     def _load_config(self):
         _config = {
             "last_file": "",
             "last_char_index": 0,
+            "last_mode": None,
             "language": get_system_language(),
             "theme": "dark",
             "auto_backup": True,
             "max_backups": 5,
-            "message_level": 0  # 0:All, 1:Warning, 2:Error
+            "reduce_message_pop": True
         }
         try:
             if os.path.exists(CONFIG_FILE):
@@ -128,11 +130,21 @@ class ConfigManager:
             self.save()
 
     @property
-    def message_level(self):
-        return self._config["message_level"]
+    def reduce_message_pop(self):
+        return self._config["reduce_message_pop"]
 
-    @message_level.setter
-    def message_level(self, value):
+    @reduce_message_pop.setter
+    def reduce_message_pop(self, value):
         with self._lock:
-            self._config["message_level"] = value
+            self._config["reduce_message_pop"] = value
+            self.save()
+
+    @property
+    def last_mode(self):
+        return self._config["last_mode"]
+
+    @last_mode.setter
+    def last_mode(self, value):
+        with self._lock:
+            self._config["last_mode"] = value
             self.save()
