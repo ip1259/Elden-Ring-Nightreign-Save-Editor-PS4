@@ -4882,7 +4882,8 @@ class SaveEditorGUI:
         self.config.language = lang_code
         lang_mgr.load_language(lang_code)
         if reload_language(lang_code):
-            self.refresh_inventory_and_vessels()
+            if globals.data is not None:
+                self.refresh_inventory_and_vessels()
         else:
             messagebox.showerror("Error", "Can't change language.")
 
@@ -4890,7 +4891,8 @@ class SaveEditorGUI:
         _mode = self.theme_combobox.get()
         self.color_theme.set_theme(_mode, self.root)
         self.config.theme = _mode
-        self.refresh_inventory_and_vessels()
+        if globals.data is not None:
+            self.refresh_inventory_and_vessels()
 
     def open_file(self):
         global MODE, userdata_path
