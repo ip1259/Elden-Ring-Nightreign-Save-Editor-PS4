@@ -1,6 +1,7 @@
 import pandas as pd
 import pathlib
-from typing import Optional, Union
+import functools
+from typing import Optional, Union, Literal
 import threading
 import logging
 
@@ -570,6 +571,42 @@ class SourceDataHandler:
         _effects = self.effect_table[self.effect_table["ID"] == pool_id]
         _effects = _effects["attachEffectId"].values.tolist()
         return _effects
+
+    @functools.cache
+    def _get_rollable_effects_wrapped(
+        self, pool_type: Literal["normal", "deep", "curse"] = "normal"
+    ) -> list[int]:
+        pools: set[int] = set()
+        relics = self._relic_table[
+            self._relic_table.index.to_series().isin(self.get_safe_relic_ids())
+        ]
+        match pool_type:
+            case "normal":
+                relics = relics[relics["isDeepRelic"] == 0]
+                pools |= set(relics["attachEffectTableId_1"].values.tolist())
+                pools |= set(relics["attachEffectTableId_2"].values.tolist())
+                pools |= set(relics["attachEffectTableId_3"].values.tolist())
+            case "deep":
+                relics = relics[relics["isDeepRelic"] > 0]
+                pools |= set(relics["attachEffectTableId_1"].values.tolist())
+                pools |= set(relics["attachEffectTableId_2"].values.tolist())
+                pools |= set(relics["attachEffectTableId_3"].values.tolist())
+            case "curse":
+                pools |= set(relics["attachEffectTableId_curse1"].values.tolist())
+                pools |= set(relics["attachEffectTableId_curse2"].values.tolist())
+                pools |= set(relics["attachEffectTableId_curse3"].values.tolist())
+        effects = self.effect_table[self.effect_table["ID"].isin(pools)]
+        effects = df_filter_zero_chanceWeight(effects)
+        return effects["attachEffectId"].unique().tolist()
+
+    def get_rollable_effects(
+        self, pool_type: Literal["normal", "deep", "curse"] = "normal"
+    ):
+        """Get all effects that can roll (chanceWeight > 0) in a given pool type
+        (normal, deep, or curse).
+        """
+        logger.debug(f"Getting rollable effects for {pool_type} pool")
+        return self._get_rollable_effects_wrapped(pool_type)
 
     def get_pool_rollable_effects(self, pool_id: int):
         """Get effects that can actually roll in a pool (chanceWeight != 0).
