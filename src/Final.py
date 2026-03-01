@@ -7857,33 +7857,13 @@ class ModifyRelicDialog:
                 messagebox.showerror("Error", "Invalid relic ID in entry field")
                 return
 
-            try:
-                _effects = [int(entry.get()) for entry in self.effect_entries]
-                _pools = self.game_data.get_adjusted_pool_sequence(
-                    _cut_relic_id, _effects
-                )
-                _pool_id = _pools[effect_index]
-            except (KeyError, IndexError, ValueError) as e:
-                messagebox.showerror(
-                    "Error", f"Could not get pool for relic {_cut_relic_id}: {e}"
-                )
-                return
-
-            _pool_effects = self.game_data.get_pool_rollable_effects(_pool_id)
-
-            # For curse slots (index >= 3), if this specific pool is disabled,
-            # use ALL available curse pools combined (game rearranges internally)
-            if not _pool_effects and is_curse_slot:
-                # Combine effects from all available curse pools
-                all_curse_effects = set()
-                for i in range(3):
-                    curse_pool = _pools[3 + i]
-                    if curse_pool != -1:
-                        pool_effects = self.game_data.get_pool_rollable_effects(
-                            curse_pool
-                        )
-                        all_curse_effects.update(pool_effects)
-                _pool_effects = list(all_curse_effects)
+            if is_curse_slot:
+                pool_type = "curse"
+            elif self.game_data.is_deep_relic(_cut_relic_id):
+                pool_type = "deep"
+            else:
+                pool_type = "normal"
+            _pool_effects = self.game_data.get_rollable_effects(pool_type)
 
             if not _pool_effects:
                 # Slot is disabled and no alternatives available
@@ -7903,62 +7883,30 @@ class ModifyRelicDialog:
             _effect_params_df = _effect_params_df[
                 _effect_params_df.index.isin(_pool_effects)
             ]
-            match effect_index:
-                case 1:
-                    _effect_id_1 = int(self.effect_entries[0].get())
-                    _conflic_id_1 = self.game_data.effects[_effect_id_1].conflict_id
-                    _effect_params_df = _effect_params_df[
-                        (_effect_params_df["compatibilityId"] == -1)
-                        | (_effect_params_df["compatibilityId"] != _conflic_id_1)
-                    ]
-                case 2:
-                    _effect_id_1 = int(self.effect_entries[0].get())
-                    _conflic_id_1 = self.game_data.effects[_effect_id_1].conflict_id
-                    _effect_id_2 = int(self.effect_entries[1].get())
-                    _conflic_id_2 = self.game_data.effects[_effect_id_2].conflict_id
-                    _effect_params_df = _effect_params_df[
-                        (_effect_params_df["compatibilityId"] == -1)
-                        | (
-                            (_effect_params_df["compatibilityId"] != _conflic_id_1)
-                            & (_effect_params_df["compatibilityId"] != _conflic_id_2)
-                        )
-                    ]
-                case 4:
-                    _effect_id_4 = int(self.effect_entries[3].get())
-                    _conflic_id_4 = self.game_data.effects[_effect_id_4].conflict_id
-                    _effect_params_df = _effect_params_df[
-                        (_effect_params_df["compatibilityId"] == -1)
-                        | (_effect_params_df["compatibilityId"] != _conflic_id_4)
-                    ]
-                case 5:
-                    _effect_id_4 = int(self.effect_entries[3].get())
-                    _conflic_id_4 = self.game_data.effects[_effect_id_4].conflict_id
-                    _effect_id_5 = int(self.effect_entries[4].get())
-                    _conflic_id_5 = self.game_data.effects[_effect_id_5].conflict_id
-                    _effect_params_df = _effect_params_df[
-                        (_effect_params_df["compatibilityId"] == -1)
-                        | (
-                            (_effect_params_df["compatibilityId"] != _conflic_id_4)
-                            & (_effect_params_df["compatibilityId"] != _conflic_id_5)
-                        )
-                    ]
+
+            # Filter out conflicting effects
+            for i in range(3) if not is_curse_slot else range(3, 6):
+                if i == effect_index:
+                    continue
+                _effect_id = int(self.effect_entries[i].get())
+                _conflic_id = self.game_data.effects[_effect_id].conflict_id
+                _effect_params_df = _effect_params_df[
+                    (_effect_params_df["compatibilityId"] == -1)
+                    | (_effect_params_df["compatibilityId"] != _conflic_id)
+                ]
             _items = _effect_params_df.index.tolist()
+
+            # Add "Empty" effect at the top
+            _items.insert(0, 0xFFFFFFFF)
         else:
             _items = [int(k) for k in self.game_data.effects.keys()]
 
-        # For curse slots, add "No Curse (Empty)" option at the top
-        if is_curse_slot:
-            _items.insert(0, 0xFFFFFFFF)
-
-        # Build dialog title with relic type info in safe mode
+        # Build dialog title with slot type in safe mode
         if self.safe_mode_var.get():
-            relic_type, _, _ = self.game_data.get_relic_type_info(_cut_relic_id)
             slot_type = "Curse" if is_curse_slot else "Effect"
-            dialog_title = (
-                f"Select {slot_type} {(effect_index % 3) + 1} — {relic_type} Pools"
-            )
+            dialog_title = f"Select {slot_type} {(effect_index % 3) + 1}"
         else:
-            dialog_title = f"Select Effect {effect_index + 1} — All Effects (Unsafe)"
+            dialog_title = f"Select Effect {effect_index + 1} (Unsafe)"
 
         SearchDialog(
             self.dialog,
