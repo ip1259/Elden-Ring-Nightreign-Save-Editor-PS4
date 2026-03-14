@@ -1427,6 +1427,9 @@ class ColorTheme:
             "illegal.TLabel", foreground=status["illegal"], font=("Arial", 10, "bold")
         )
         self._style.configure(
+            "valid.TLabel", foreground=status["valid"], font=("Arial", 10, "bold")
+        )
+        self._style.configure(
             "MissingCurse.TLabel",
             foreground=relic["Purple"],
             font=("Arial", 10, "bold"),
@@ -7372,12 +7375,12 @@ class ModifyRelicDialog:
                 if conflict_id1 == conflict_id2:
                     self.slot_labels[effect_idx].config(
                         text=f"⚠️ {base_effect_label} (Conflicts with Effect {j+1}):",
-                        foreground="red",
+                        style="illegal.TLabel",
                     )
                     break
             else:
                 self.slot_labels[effect_idx].config(
-                    text=f"{base_effect_label}:", foreground="black"
+                    text=f"{base_effect_label}:", style="TLabel"
                 )
 
             # Check if this effect needs a curse
@@ -7392,23 +7395,23 @@ class ModifyRelicDialog:
             if needs_curse and not has_curse:
                 # Needs curse but doesn't have one - show warning
                 self.slot_labels[curse_idx].config(
-                    text=f"⚠️ {base_curse_label} (REQUIRED):", foreground="red"
+                    text=f"⚠️ {base_curse_label} (REQUIRED):", style="illegal.TLabel"
                 )
             elif needs_curse and has_curse:
                 # Needs curse and has one - show satisfied
                 self.slot_labels[curse_idx].config(
-                    text=f"✓ {base_curse_label}:", foreground="green"
+                    text=f"✓ {base_curse_label}:", style="valid.TLabel"
                 )
             elif not needs_curse and has_curse:
                 # Doesn't need curse but has one - ILLEGAL
                 self.slot_labels[curse_idx].config(
                     text=f"⛔ {base_curse_label} (ILLEGAL - remove curse):",
-                    foreground="red",
+                    style="illegal.TLabel",
                 )
             else:
                 # Doesn't need curse and doesn't have one - correct
                 self.slot_labels[curse_idx].config(
-                    text=f"{base_curse_label} (not needed):", foreground="gray"
+                    text=f"{base_curse_label} (not needed):", style="TLabel"
                 )
 
     def search_items(self):
